@@ -60,21 +60,49 @@ public sealed class HarnessHelper : CSharpOverrideHelper {
         Console.Error.WriteLine($"[harness] checkpoint armed @ {cp.Segment:X4}:{cp.Offset:X4}");
 
         // Harness-fwd diagnostic hooks. Passive — these run on top of
-        // the native instruction and don't replace it.
+        // the native instruction and don't replace it. Used to localise
+        // where the boot intro stalls under headless emulation.
         if (Environment.GetEnvironmentVariable("CRYO_HARNESS_FAST_HNM") is not null) {
-            DoOnTopOfInstruction(0x1000, 0x0580, () => {
-                _playIntroHits++;
-                if (_playIntroHits <= 5 || _playIntroHits % 50 == 0) {
-                    Console.Error.WriteLine($"[harness-fwd] play_intro entered #{_playIntroHits}");
-                }
-            });
-            DoOnTopOfInstruction(0x1000, 0x093F, () => {
-                _recordReaderHits++;
-                if (_recordReaderHits <= 20 || _recordReaderHits % 100 == 0) {
-                    Console.Error.WriteLine($"[harness-fwd] record-read #{_recordReaderHits} (si={State.SI:X4})");
-                }
-            });
-            Console.Error.WriteLine("[harness-fwd] diagnostic hooks armed on cs1:0x580 + cs1:0x93F");
+            var traceAddrs = new (ushort Off, string Label)[] {
+                (0x0580, "play_intro_entry"),
+                (0x0585, "after_de54_call"),
+                (0x0589, "after_far_3959"),
+                (0x058C, "after_aeb7_call"),
+                (0x0592, "after_call_945"),
+                (0x0599, "before_call_93F_record_read"),
+                (0x059C, "after_call_93F"),
+                (0x05A8, "after_jnz_to_5A3"),
+                (0x05AB, "after_call_911"),
+                (0x05DC, "after_call_C07C"),
+                (0x05E4, "before_call_DD63"),
+                (0x05E9, "after_call_DD63"),
+                (0x05F6, "before_jz_to_592"),
+                (0x05FD, "exit_via_pushf"),
+                (0x093F, "record_reader_93F"),
+                (0x0945, "store_si_to_4854"),
+                (0x0925, "init_46d7_write"),  // mov byte [0x46d7], 0
+                (0x0798, "boot_helper_timer_set"),  // boot_helper_timer_set writes [0x4780]
+                (0x061C, "load_VIRGIN_HNM_entry"),  // record 0's helperA
+                (0xCA1B, "hnm_load_entry"),         // confirm jmp lands here
+                (0xCC85, "CheckIfHnmComplete_entry"),
+                (0xC9F4, "do_frame_entry"),
+                (0xCA60, "hnm_do_frame_entry"),
+            };
+            var hitCounts = new System.Collections.Generic.Dictionary<ushort, int>();
+            foreach (var (off, label) in traceAddrs) {
+                var capturedOff = off;
+                var capturedLabel = label;
+                hitCounts[off] = 0;
+                DoOnTopOfInstruction(0x1000, off, () => {
+                    hitCounts[capturedOff]++;
+                    int n = hitCounts[capturedOff];
+                    if (n <= 3 || n % 200 == 0) {
+                        Console.Error.WriteLine(
+                            $"[harness-fwd] {capturedOff:X4} {capturedLabel} #{n} (ax={State.AX:X4} bx={State.BX:X4} si={State.SI:X4} ds={State.DS:X4} es={State.ES:X4})");
+                    }
+                });
+            }
+            Console.Error.WriteLine($"[harness-fwd] diagnostic hooks armed on {traceAddrs.Length} addresses");
         }
 
         // Watch memory writes BEFORE the invoke trampoline so we catch loader writes

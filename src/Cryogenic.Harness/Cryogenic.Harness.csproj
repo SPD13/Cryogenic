@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net8.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<NoWarn>0164;0162</NoWarn>
+		<RootNamespace>Cryogenic.Harness</RootNamespace>
+		<AssemblyName>Cryogenic.Harness</AssemblyName>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Spice86" Version="11.1.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Cryogenic\Cryogenic.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Using Include="Spice86.Core.Emulator.Memory" />
+		<Using Include="Spice86.Core.Emulator.ReverseEngineer" />
+		<Using Include="Spice86.Core.Emulator.VM" />
+		<Using Include="Spice86.Shared.Utils" />
+	</ItemGroup>
+</Project>

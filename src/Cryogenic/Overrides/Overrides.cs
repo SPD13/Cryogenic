@@ -129,6 +129,10 @@ public partial class Overrides : CSharpOverrideHelper {
         // Dump memory at the proper time. Too soon and drivers wont be loaded, too late and init code will be erased
         DefineMemoryDumpsMapping();
         DefineMT32DriverCodeOverrides();
+        // Runtime trace hooks: log palette + HNM load events for the asset
+        // extractor to reconcile into per-cinematic palette pairings.
+        // See DOCUMENTATION/Tech/23 for why this can't be done statically.
+        DefinePaletteLoggingOverrides();
         
         // Generated code, crashes for various reasons
         //DefineGeneratedCodeOverrides();

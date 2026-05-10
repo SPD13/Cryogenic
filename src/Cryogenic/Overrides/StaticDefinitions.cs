@@ -28,14 +28,11 @@ public partial class Overrides {
         DefineFunction(cs1, 0x21C, "play_intro2_ida");
         DefineFunction(cs1, 0x0309, "play_CREDITS_HNM_ida");
         DefineFunction(cs1, 0x0580, "play_intro_ida");
-        DefineFunction(cs1, 0x61C, "load_VIRGIN_HNM_ida");
+        // cs1:0x61C/0x64D/0x658/0x678/0x69E load_*_HNM helpers —
+        // overridden in VideoCode.cs (harness fast-fwd path).
         DefineFunction(cs1, 0x0625, "play_VIRGIN_HNM_ida");
-        DefineFunction(cs1, 0x64D, "load_CRYO_HNM_ida");
-        DefineFunction(cs1, 0x0658, "load_CRYO2_HNM_ida");
         DefineFunction(cs1, 0x0661, "play_CRYO_OR_CRYO2_HNM_ida");
-        DefineFunction(cs1, 0x0678, "load_PRESENT_HNM_ida");
         DefineFunction(cs1, 0x0684, "play_PRESENT_HNM_ida");
-        DefineFunction(cs1, 0x69E, "load_INTRO_HNM_ida");
         DefineFunction(cs1, 0xF131, "setErrorMessageToNotEnoughMemory");
         DefineFunction(cs1, 0x6AA, "play_hnm_86_frames_ida");
         DefineFunction(cs1, 0x6BD, "play_hnm_skippable_ida");
