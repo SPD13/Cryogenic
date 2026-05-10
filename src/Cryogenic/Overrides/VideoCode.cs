@@ -22,6 +22,59 @@ public partial class Overrides {
         DefineFunction(cs1, 0xCA60, HnmDoFrame_1000_CA60_01CA60);
         DefineFunction(cs1, 0xC9E8, HnmDoFrameSkippable_1000_C9E8_01C9E8);
         DefineFunction(cs1, 0xCA01, HnmCloseResource_1000_CA01_01CA01);
+        DefineFunction(cs1, 0xDDF0, BootIntroWait_1000_DDF0_01DDF0);
+        // Boot-intro per-HNM load helpers — each ends with `jmp 0xCA1B`,
+        // which Spice86 doesn't intercept via DefineFunction. We
+        // override the load helpers themselves (entered via `call`)
+        // so our stub fires for the load AND its tail-chained
+        // hnm_load_ida. NearRet here pops the dispatcher's saved
+        // return and aborts the entire load chain.
+        DefineFunction(cs1, 0x061C, LoadVirginHnm_1000_061C_01061C);
+        DefineFunction(cs1, 0x064D, LoadCryoHnm_1000_064D_01064D);
+        DefineFunction(cs1, 0x0658, LoadCryo2Hnm_1000_0658_010658);
+        DefineFunction(cs1, 0x0678, LoadPresentHnm_1000_0678_010678);
+        DefineFunction(cs1, 0x069E, LoadIntroHnm_1000_069E_01069E);
+    }
+
+    private Action FastForwardLoadHelper(string label, byte hnmIdHint) {
+        if (HarnessFastForwardHnm) {
+            _hnmLoadCount++;
+            if (_hnmLoadCount <= 30 || _hnmLoadCount % 50 == 0) {
+                Console.Error.WriteLine($"[harness-fwd] load-helper {label} #{_hnmLoadCount} (ax pre={AX:X4})");
+            }
+            globalsOnDs.Set1138_DBE7_Byte8_hnmFinishedFlag(2);
+            ClearCarry();
+            return NearRet();
+        }
+        return NearRet();
+    }
+
+    public Action LoadVirginHnm_1000_061C_01061C(int gotoAddress)   => FastForwardLoadHelper("VIRGIN", 0x15);
+    public Action LoadCryoHnm_1000_064D_01064D(int gotoAddress)     => FastForwardLoadHelper("CRYO", 0x16);
+    public Action LoadCryo2Hnm_1000_0658_010658(int gotoAddress)    => FastForwardLoadHelper("CRYO2", 0x17);
+    public Action LoadPresentHnm_1000_0678_010678(int gotoAddress)  => FastForwardLoadHelper("PRESENT", 0x18);
+    public Action LoadIntroHnm_1000_069E_01069E(int gotoAddress)    => FastForwardLoadHelper("INTRO", 0x0F);
+
+    /// <summary>
+    /// Override for cs1:DDF0 — the boot-intro dispatcher's per-record
+    /// WAIT LOOP. Native code at this address loops `call 0xABA3 →
+    /// call 0xDD63 (stc_on_user_input) → jnc back` until either a
+    /// scene-timer condition fires (jz path) or the user provides
+    /// input (jc path). This is what makes each record take ~10 s
+    /// wall time under headless emulation — the loop spins on the
+    /// real-time PIT.
+    ///
+    /// Under harness fast-fwd: return immediately with CF=0 so the
+    /// dispatcher's `jnc 0x592` jumps back to dispatch the next
+    /// record without waiting.
+    /// </summary>
+    public Action BootIntroWait_1000_DDF0_01DDF0(int gotoAddress) {
+        if (HarnessFastForwardHnm) {
+            ClearCarry();
+            return NearRet();
+        }
+        ClearCarry();
+        return NearRet();
     }
 
     /// <summary>
@@ -129,7 +182,7 @@ public partial class Overrides {
     public Action CheckIfHnmComplete_1000_CC85_01CC85(int gotoAddress) {
         if (HarnessFastForwardHnm) {
             _hnmFastForwardCount++;
-            if (_hnmFastForwardCount % 50 == 1) {
+            if (_hnmFastForwardCount <= 30 || _hnmFastForwardCount % 50 == 0) {
                 Console.Error.WriteLine($"[harness-fwd] HNM fast-forward hit #{_hnmFastForwardCount}");
             }
             // Force "complete" so the play_*_HNM loop exits.
