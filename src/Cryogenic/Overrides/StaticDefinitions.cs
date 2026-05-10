@@ -34,8 +34,7 @@ public partial class Overrides {
         DefineFunction(cs1, 0x0661, "play_CRYO_OR_CRYO2_HNM_ida");
         DefineFunction(cs1, 0x0684, "play_PRESENT_HNM_ida");
         DefineFunction(cs1, 0xF131, "setErrorMessageToNotEnoughMemory");
-        DefineFunction(cs1, 0x6AA, "play_hnm_86_frames_ida");
-        DefineFunction(cs1, 0x6BD, "play_hnm_skippable_ida");
+        // 0x6AA / 0x6BD overridden in VideoCode.cs (harness fast-fwd).
         DefineFunction(cs1, 0x9EF, "play_CREDITS_HNM_ida");
         DefineFunction(cs1, 0x2D74, "open_SAL_resource_ida");
         DefineFunction(cs1, 0x3B59, "draw_SAL_ida");
@@ -92,7 +91,7 @@ public partial class Overrides {
         DefineFunction(cs1, 0xCE3B, "hnm_handle_pal_chunk_ida");
         DefineFunction(cs1, 0xCE6C, "initialize_memory_handler_ida");
         DefineFunction(cs1, 0xCEFC, "load_IRULn_HSQ_ida");
-        DefineFunction(cs1, 0xCF1B, "play_IRULx_HSQ_ida");
+        // 0xCF1B play_IRULx_HSQ_ida — overridden in VideoCode.cs (harness fast-fwd).
         DefineFunction(cs1, 0xCF4B, "IRULx_draw_or_clear_subtitle_ida");
         DefineFunction(cs1, 0xCFA0, "check_amr_or_eng_language_ida");
         DefineFunction(cs1, 0xD00F, "load_PHRASExx_HSQ_ida");
