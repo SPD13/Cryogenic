@@ -87,6 +87,8 @@ public sealed class HarnessHelper : CSharpOverrideHelper {
                 (0xCC85, "CheckIfHnmComplete_entry"),
                 (0xC9F4, "do_frame_entry"),
                 (0xCA60, "hnm_do_frame_entry"),
+                (0x0798, "BOOT_TIMER_SET"),     // boot_helper_timer_set — should fire on records 15,16,22,23,25,26
+                (0x05ED, "DISPATCHER_CALL_AX"), // the actual record callTarget dispatch
             };
             var hitCounts = new System.Collections.Generic.Dictionary<ushort, int>();
             foreach (var (off, label) in traceAddrs) {

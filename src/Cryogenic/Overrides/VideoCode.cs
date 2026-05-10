@@ -34,7 +34,43 @@ public partial class Overrides {
         DefineFunction(cs1, 0x0658, LoadCryo2Hnm_1000_0658_010658);
         DefineFunction(cs1, 0x0678, LoadPresentHnm_1000_0678_010678);
         DefineFunction(cs1, 0x069E, LoadIntroHnm_1000_069E_01069E);
+        // TITLE replay helpers (records 9, 10) — both call play_*_HNM
+        // loops that we already short-circuit via CheckIfHnmComplete,
+        // but their entry function does its own per-record setup that
+        // can stall. Stub to NearRet under harness fast-fwd.
+        DefineFunction(cs1, 0x06AA, PlayHnm86Frames_1000_06AA_0106AA);
+        DefineFunction(cs1, 0x06BD, PlayHnmSkippable_1000_06BD_0106BD);
+        // IRULAN dispatcher (record 6 — different from regular HNM).
+        DefineFunction(cs1, 0xCF1B, PlayIrulanHnm_1000_CF1B_01CF1B);
+        // MTG / PLANT / VER load helpers (records 12, 19, 29, 39, 41).
+        DefineFunction(cs1, 0x06CE, LoadMtg1Hnm_1000_06CE_0106CE);
+        DefineFunction(cs1, 0x06D3, LoadMtg2Hnm_1000_06D3_0106D3);
+        DefineFunction(cs1, 0x06D8, LoadPlayMtg3Hnm_1000_06D8_0106D8);
+        DefineFunction(cs1, 0x06EA, LoadPlantHnm_1000_06EA_0106EA);
+        DefineFunction(cs1, 0x0711, LoadVerHnm_1000_0711_010711);
     }
+    public Action LoadMtg1Hnm_1000_06CE_0106CE(int gotoAddress)     => FastForwardLoadHelper("MTG1", 0x10);
+    public Action LoadMtg2Hnm_1000_06D3_0106D3(int gotoAddress)     => FastForwardLoadHelper("MTG2", 0x11);
+    public Action LoadPlayMtg3Hnm_1000_06D8_0106D8(int gotoAddress) => FastForwardLoadHelper("MTG3", 0x12);
+    public Action LoadPlantHnm_1000_06EA_0106EA(int gotoAddress)    => FastForwardLoadHelper("PLANT", 0x13);
+    public Action LoadVerHnm_1000_0711_010711(int gotoAddress)      => FastForwardLoadHelper("VER", 0x0E);
+
+    private Action FastForwardPlayHelper(string label) {
+        if (HarnessFastForwardHnm) {
+            _hnmFastForwardCount++;
+            if (_hnmFastForwardCount <= 30 || _hnmFastForwardCount % 50 == 0) {
+                Console.Error.WriteLine($"[harness-fwd] play-helper {label} #{_hnmFastForwardCount}");
+            }
+            globalsOnDs.Set1138_DBE7_Byte8_hnmFinishedFlag(2);
+            ClearCarry();
+            return NearRet();
+        }
+        return NearRet();
+    }
+
+    public Action PlayHnm86Frames_1000_06AA_0106AA(int gotoAddress)  => FastForwardPlayHelper("HNM_86F");
+    public Action PlayHnmSkippable_1000_06BD_0106BD(int gotoAddress) => FastForwardPlayHelper("HNM_SKIP");
+    public Action PlayIrulanHnm_1000_CF1B_01CF1B(int gotoAddress)    => FastForwardPlayHelper("IRULAN");
 
     private Action FastForwardLoadHelper(string label, byte hnmIdHint) {
         if (HarnessFastForwardHnm) {
