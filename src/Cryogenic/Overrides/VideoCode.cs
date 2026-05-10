@@ -19,6 +19,49 @@ public partial class Overrides {
         DefineFunction(cs1, 0xCC85, CheckIfHnmComplete_1000_CC85_01CC85);
         DefineFunction(cs1, 0xC9F4, DoFrameAndCheckIfFrameAdvanced_1000_C9F4_01C9F4);
         DefineFunction(cs1, 0xCA1B, HnmLoad_1000_CA1B_01CA1B);
+        DefineFunction(cs1, 0xCA60, HnmDoFrame_1000_CA60_01CA60);
+        DefineFunction(cs1, 0xC9E8, HnmDoFrameSkippable_1000_C9E8_01C9E8);
+        DefineFunction(cs1, 0xCA01, HnmCloseResource_1000_CA01_01CA01);
+    }
+
+    /// <summary>
+    /// Override for cs1:CA60 — `hnm_do_frame_ida`. The engine's
+    /// per-tick gfx handler calls this every PIT interrupt; without
+    /// a fast stub the native frame decoder grinds through bytes
+    /// even with no loaded HNM. Returns immediately under harness.
+    /// </summary>
+    public Action HnmDoFrame_1000_CA60_01CA60(int gotoAddress) {
+        if (HarnessFastForwardHnm) {
+            ZeroFlag = false;
+            return NearRet();
+        }
+        return NearRet();
+    }
+
+    /// <summary>
+    /// Override for cs1:C9E8 — `hnm_do_frame_skippable_ida`. Wrapper
+    /// around frame decode; stubbed for the same reason as above.
+    /// </summary>
+    public Action HnmDoFrameSkippable_1000_C9E8_01C9E8(int gotoAddress) {
+        if (HarnessFastForwardHnm) {
+            ZeroFlag = false;
+            return NearRet();
+        }
+        return NearRet();
+    }
+
+    /// <summary>
+    /// Override for cs1:CA01 — `hnm_close_resource_ida`. Frees the
+    /// HNM file handle / buffer. Under harness fast-fwd, no-op since
+    /// HnmLoad didn't actually open anything.
+    /// </summary>
+    public Action HnmCloseResource_1000_CA01_01CA01(int gotoAddress) {
+        if (HarnessFastForwardHnm) {
+            globalsOnDs.Set1138_DBE7_Byte8_hnmFinishedFlag(0);
+            ClearCarry();
+            return NearRet();
+        }
+        return NearRet();
     }
 
     /// <summary>
@@ -28,18 +71,15 @@ public partial class Overrides {
     /// touching disk — so the subsequent play_*_HNM loop exits
     /// after one CheckIfHnmComplete tick.
     /// </summary>
+    private static int _hnmLoadCount = 0;
     public Action HnmLoad_1000_CA1B_01CA1B(int gotoAddress) {
         if (HarnessFastForwardHnm) {
-            // Mark "loaded successfully": set the finished flag to
-            // anything-not-0-or-1 so CheckIfHnmComplete's normal path
-            // ALSO returns ZF=clear if our HNM override fast-fwd is
-            // somehow bypassed.
+            _hnmLoadCount++;
+            Console.Error.WriteLine($"[harness-fwd] hnm_load #{_hnmLoadCount} ax={AX:X4}");
             globalsOnDs.Set1138_DBE7_Byte8_hnmFinishedFlag(2);
             ClearCarry();
             return NearRet();
         }
-        // No override outside harness — Spice86 falls back to native.
-        // (We still get registered so the function info exists.)
         ClearCarry();
         return NearRet();
     }

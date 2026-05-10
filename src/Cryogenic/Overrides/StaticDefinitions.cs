@@ -80,14 +80,14 @@ public partial class Overrides {
         DefineFunction(cs1, 0xC4F0, "rect_at_si_to_regs_ida");
         DefineFunction(cs1, 0xC92B, "hnm_reset_and_read_header_ida");
         DefineFunction(cs1, 0xC93C, "hnm_read_header_ida");
-        DefineFunction(cs1, 0xC9E8, "hnm_do_frame_skippable_ida");
+        // cs1:0xC9E8 hnm_do_frame_skippable_ida — see VideoCode.cs (harness stub).
         // cs1:0xC9F4 do_frame_and_check_if_frame_advanced_ida — registered
         // as a real override in VideoCode.cs (with optional harness
         // fast-forward) instead of a static-symbol placeholder.
-        DefineFunction(cs1, 0xCA01, "hnm_close_resource_ida");
+        // cs1:0xCA01 hnm_close_resource_ida — see VideoCode.cs (harness stub).
         // cs1:0xCA1B hnm_load_ida — registered in VideoCode.cs so the
         // harness can short-circuit it under CRYO_HARNESS_FAST_HNM.
-        DefineFunction(cs1, 0xCA60, "hnm_do_frame_ida");
+        // cs1:0xCA60 hnm_do_frame_ida — see VideoCode.cs (harness stub).
         DefineFunction(cs1, 0xCC96, "hnm_decode_video_frame_ida");
         DefineFunction(cs1, 0xCD8F, "hnm_read_header_size_ida");
         DefineFunction(cs1, 0xCDA0, "hnm_prepare_header_read_ida");
