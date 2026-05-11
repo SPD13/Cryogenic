@@ -239,37 +239,46 @@ public partial class Overrides {
         }
     }
 
-    private static readonly long[] PalaceScenePhaseCycleThresholds = new[] {
-        1_100_000_000L,
-        1_230_000_000L,
-        1_335_000_000L,
-    };
-    private int _palaceSceneCapturedMask = 0;
+    // Capture every FBCOPY-to-VGA whose previous one was >5M cycles ago
+    // (= a new "scene" boundary). Empirically the post-MTG1 palace scenes
+    // come in three quick room-establishment shots ~10Mc apart, then longer
+    // dialogue scenes, then a quick "palace view" right before MTG2.
+    // A 30M-cycle threshold (earlier attempt) lumped the three quick shots
+    // into one cluster; 5M cycles correctly separates them while still
+    // collapsing the multiple repaints inside a single dialogue scene.
+    private const long SceneCaptureCycleGap = 5_000_000L;
+    private const long SceneCaptureWindowStart = 250_000_000L;
+    private const long SceneCaptureWindowEnd = 1_500_000_000L;
+    private const int SceneCaptureMax = 16;
+    private long _lastPresentCycles = -1;
+    private int _sceneCaptureCount = 0;
 
     /// <summary>
     /// Dumps the sprite-cache segment (0x335B) and compositing back-buffer
-    /// segment (0x42FB) to disk the first time a FBCOPY to VGA fires past
-    /// each of the three palace-scene cycle thresholds. Only the present
-    /// path (ES == 0xA000) qualifies. Each scene yields two 64-KiB files
-    /// named <c>palace_scene_{A,B,C}_335B_cyclesNNN.bin</c> and similarly
-    /// for 0x42FB, in the working directory next to the trace.
+    /// segment (0x42FB) to disk on the first FBCOPY-to-VGA of every new
+    /// "scene" — defined as a present that comes more than 30M cycles
+    /// after the previous one. Captures within a wide cycles window
+    /// covering Irulan → MTG2 onset. Capped at 16 captures total.
     /// </summary>
     private void MaybeCapturePalaceScene() {
         if (ES != 0xA000) return;
         long cycles = (long)State.Cycles;
-        for (int i = 0; i < PalaceScenePhaseCycleThresholds.Length; i++) {
-            int bit = 1 << i;
-            if ((_palaceSceneCapturedMask & bit) != 0) continue;
-            if (cycles < PalaceScenePhaseCycleThresholds[i]) continue;
-            _palaceSceneCapturedMask |= bit;
-            char label = (char)('A' + i);
-            CaptureSegmentToFile(0x335B, $"palace_scene_{label}_335B_cycles{cycles}.bin");
-            CaptureSegmentToFile(0x42FB, $"palace_scene_{label}_42FB_cycles{cycles}.bin");
-            _loggerService.Information(
-                "PaletteLogging: captured palace scene {@Label} at cycles {@Cycles}",
-                label, cycles);
-            break;
-        }
+        if (cycles < SceneCaptureWindowStart) return;
+        if (cycles > SceneCaptureWindowEnd) return;
+
+        bool isNewScene = _lastPresentCycles < 0
+            || (cycles - _lastPresentCycles) > SceneCaptureCycleGap;
+        _lastPresentCycles = cycles;
+        if (!isNewScene) return;
+        if (_sceneCaptureCount >= SceneCaptureMax) return;
+
+        _sceneCaptureCount++;
+        int idx = _sceneCaptureCount;
+        CaptureSegmentToFile(0x335B, $"palace_scene_{idx:D2}_335B_cycles{cycles}.bin");
+        CaptureSegmentToFile(0x42FB, $"palace_scene_{idx:D2}_42FB_cycles{cycles}.bin");
+        _loggerService.Information(
+            "PaletteLogging: captured palace scene #{@Idx} at cycles {@Cycles}",
+            idx, cycles);
     }
 
     private void CaptureSegmentToFile(ushort segment, string filename) {
