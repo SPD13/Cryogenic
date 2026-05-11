@@ -65,6 +65,20 @@ public partial class Overrides {
         DoOnTopOfInstruction(cs2, 0x124, () => LogVgaCallEntry("VgaFunc12CopyRectangle"));
         DoOnTopOfInstruction(cs2, 0x133, () => LogVgaCallEntry("VgaFunc17ExplodeAndCenter"));
         DoOnTopOfInstruction(cs2, 0x17B, () => LogVgaCallEntry("VgaFunc41CopyPalette2toPalette1"));
+        // The engine's per-sprite render call: cs1:0xC22F (draw_sprite_ida).
+        DoOnTopOfInstruction(cs1, 0xC22F, LogDrawSpriteEntry);
+        // Sprite-sheet open: tracks which atlas is currently active.
+        DoOnTopOfInstruction(cs1, 0xC13E, LogOpenSpriteSheetEntry);
+        // High-level gfx-copy entry points. These appear to drive
+        // per-animation updates that the cs2:0x1B8E blit hook only
+        // sees the tail of. By hooking these we catch every "copy a
+        // rect" call with the engine's register state — typically a
+        // sprite/animation index, a rect-table SI pointer, etc.
+        DoOnTopOfInstruction(cs1, 0xC477, () => LogGfxCopyEntry("rect_at_si"));
+        DoOnTopOfInstruction(cs1, 0xC49A, () => LogGfxCopyEntry("framebuffer_to_screen"));
+        DoOnTopOfInstruction(cs1, 0xC4AA, () => LogGfxCopyEntry("rect_to_screen"));
+        DoOnTopOfInstruction(cs1, 0xC4CD, () => LogGfxCopyEntry("framebuf_to_screen"));
+        DoOnTopOfInstruction(cs1, 0xC4F0, () => LogGfxCopyEntry("rect_at_si_to_regs"));
     }
 
     private void EnsurePaletteLogInitialized() {
@@ -198,15 +212,16 @@ public partial class Overrides {
 
             // Capture full source bytes for PRESENT blits inside the palace
             // window (src=0x42FB, dst=0xA000) — those are the bytes the
-            // user actually sees. The compose blits (src=0x335B) source
-            // a fixed buffer and don't help identify the active animation
-            // frame. Raw bytes (base64) let an offline matcher do
-            // pixel-by-pixel comparison against rendered atlas frames,
-            // ignoring background pixels (where the character composite
-            // is transparent).
+            // user actually sees. For COMPOSE blits (src=0x335B, dst=0x42FB)
+            // the source pixels at the blitted slot are not enough to
+            // identify which animation frame is active: the engine paints
+            // a full character composite into 0x335B but only blits one
+            // slot (e.g. the eye strip). To identify mouth state we
+            // also dump a wider buffer slice of 0x335B at each compose
+            // covering the full character area (60..260, 20..132), via
+            // the side-channel `bufBytes` field.
             long cycles = (long)State.Cycles;
             if (cycles >= 1_000_000_000L && cycles <= 1_300_000_000L
-                && dstSeg == 0xA000
                 && rows > 0 && cols > 0 && rows * cols <= 8192) {
                 int width = rows;
                 int height = cols;
@@ -219,7 +234,30 @@ public partial class Overrides {
                         data[row * width + col] = UInt8[srcLinear + (uint)row * 320 + (uint)col];
                     }
                 }
-                sb.Append(",\"srcBytes\":\"").Append(Convert.ToBase64String(data)).Append('"');
+                if (dstSeg == 0xA000) {
+                    sb.Append(",\"srcBytes\":\"").Append(Convert.ToBase64String(data)).Append('"');
+                }
+                // For COMPOSE blits (src=0x335B), also dump a wider
+                // character-area sub-rect so the offline matcher sees
+                // every animation feature (mouth + eyes + body), not
+                // just the blitted slot. 200×112 = 22.4 KB per blit;
+                // ~25 composes per scene × 3 scenes = ~1.7 MB extra
+                // trace. Tolerable.
+                if (srcSeg == 0x335B && dstSeg == 0x42FB) {
+                    const int CHAR_X = 30;
+                    const int CHAR_Y = 0;
+                    const int CHAR_W = 260;
+                    const int CHAR_H = 152;
+                    byte[] full = new byte[CHAR_W * CHAR_H];
+                    uint segBase = (uint)srcSeg << 4;
+                    for (int row = 0; row < CHAR_H; row++) {
+                        for (int col = 0; col < CHAR_W; col++) {
+                            full[row * CHAR_W + col] = UInt8[segBase + (uint)((CHAR_Y + row) * 320 + CHAR_X + col)];
+                        }
+                    }
+                    sb.Append(",\"bufBytes\":\"").Append(Convert.ToBase64String(full)).Append('"');
+                    sb.Append(",\"bufRect\":\"" + CHAR_X + "," + CHAR_Y + "," + CHAR_W + "," + CHAR_H + "\"");
+                }
             }
             sb.Append('}');
             AppendLine(sb.ToString());
@@ -384,6 +422,111 @@ public partial class Overrides {
             AppendLine(sb.ToString());
         } catch (Exception e) {
             _loggerService.Warning("PaletteLogging/vga: {@Error}", e.Message);
+        }
+    }
+
+    /// <summary>
+    /// Generic logger for gfx_copy_* entry points (cs1:0xC477, 0xC49A,
+    /// 0xC4AA, 0xC4CD, 0xC4F0). Captures full register state inside
+    /// the palace cycle window so we can correlate animation-tick
+    /// activity with the compose blits seen in cs2:0x1B8E.
+    /// </summary>
+    private void LogGfxCopyEntry(string label) {
+        EnsurePaletteLogInitialized();
+        long cycles = (long)State.Cycles;
+        if (cycles < 1_000_000_000L || cycles > 1_300_000_000L) return;
+        try {
+            StringBuilder sb = new();
+            sb.Append("{\"t\":\"gfx_copy\",\"seq\":").Append(_palLogEventCounter++);
+            sb.Append(",\"cycles\":").Append(cycles);
+            sb.Append(",\"label\":\"").Append(label).Append('"');
+            sb.Append(",\"AX\":").Append((int)AX);
+            sb.Append(",\"BX\":").Append((int)BX);
+            sb.Append(",\"CX\":").Append((int)CX);
+            sb.Append(",\"DX\":").Append((int)DX);
+            sb.Append(",\"SI\":").Append((int)SI);
+            sb.Append(",\"DI\":").Append((int)DI);
+            sb.Append(",\"BP\":").Append((int)BP);
+            sb.Append(",\"DS\":\"0x").Append(DS.ToString("X4")).Append('"');
+            sb.Append(",\"ES\":\"0x").Append(ES.ToString("X4")).Append('"');
+            sb.Append('}');
+            AppendLine(sb.ToString());
+        } catch (Exception e) {
+            _loggerService.Warning("PaletteLogging/gfx_copy: {@Error}", e.Message);
+        }
+    }
+
+    /// <summary>
+    /// Hook at <c>draw_sprite_ida</c> (cs1:0xC22F) — the engine's
+    /// per-sprite render call. Captures full register state at entry
+    /// so the offline analyser can pin down which sprite/frame the
+    /// engine is painting (the argument convention isn't documented
+    /// yet — looks like AX = sprite index, BX/DX = position, but
+    /// confirm offline by correlating with sprite-sheet opens and
+    /// subsequent compose blits). Also captures DS so we know
+    /// which sprite-sheet segment is being read.
+    /// </summary>
+    private void LogDrawSpriteEntry() {
+        EnsurePaletteLogInitialized();
+        long cycles = (long)State.Cycles;
+        if (cycles < 1_000_000_000L || cycles > 1_300_000_000L) return;
+        try {
+            StringBuilder sb = new();
+            sb.Append("{\"t\":\"draw_sprite\",\"seq\":").Append(_palLogEventCounter++);
+            sb.Append(",\"cycles\":").Append(cycles);
+            sb.Append(",\"AX\":").Append((int)AX);
+            sb.Append(",\"BX\":").Append((int)BX);
+            sb.Append(",\"CX\":").Append((int)CX);
+            sb.Append(",\"DX\":").Append((int)DX);
+            sb.Append(",\"SI\":").Append((int)SI);
+            sb.Append(",\"DI\":").Append((int)DI);
+            sb.Append(",\"BP\":").Append((int)BP);
+            sb.Append(",\"DS\":\"0x").Append(DS.ToString("X4")).Append('"');
+            sb.Append(",\"ES\":\"0x").Append(ES.ToString("X4")).Append('"');
+            sb.Append('}');
+            AppendLine(sb.ToString());
+        } catch (Exception e) {
+            _loggerService.Warning("PaletteLogging/draw_sprite: {@Error}", e.Message);
+        }
+    }
+
+    /// <summary>
+    /// Hook at <c>open_sprite_sheet_ida</c> (cs1:0xC13E). Captures
+    /// the sprite-sheet name pointer (DX, DI on entry typically) so we
+    /// know which HSQ atlas the subsequent draw_sprite calls index.
+    /// </summary>
+    private void LogOpenSpriteSheetEntry() {
+        EnsurePaletteLogInitialized();
+        try {
+            StringBuilder sb = new();
+            sb.Append("{\"t\":\"open_sprite_sheet\",\"seq\":").Append(_palLogEventCounter++);
+            sb.Append(",\"cycles\":").Append(State.Cycles);
+            sb.Append(",\"AX\":").Append((int)AX);
+            sb.Append(",\"BX\":").Append((int)BX);
+            sb.Append(",\"CX\":").Append((int)CX);
+            sb.Append(",\"DX\":").Append((int)DX);
+            sb.Append(",\"SI\":").Append((int)SI);
+            sb.Append(",\"DI\":").Append((int)DI);
+            sb.Append(",\"DS\":\"0x").Append(DS.ToString("X4")).Append('"');
+            sb.Append(",\"ES\":\"0x").Append(ES.ToString("X4")).Append('"');
+            // Try to read a filename string at DS:DX (typical DOS open convention)
+            try {
+                uint linear = MemoryUtils.ToPhysicalAddress(DS, DX);
+                byte[] buf = new byte[20];
+                for (int i = 0; i < 20; i++) {
+                    byte b = UInt8[linear + (uint)i];
+                    if (b == 0) break;
+                    buf[i] = b;
+                }
+                string name = System.Text.Encoding.ASCII.GetString(buf).TrimEnd('\0');
+                if (name.Length > 0) {
+                    sb.Append(",\"nameAtDsDx\":\"").Append(name.Replace("\"", "\\\"")).Append('"');
+                }
+            } catch { }
+            sb.Append('}');
+            AppendLine(sb.ToString());
+        } catch (Exception e) {
+            _loggerService.Warning("PaletteLogging/open_sprite_sheet: {@Error}", e.Message);
         }
     }
 
