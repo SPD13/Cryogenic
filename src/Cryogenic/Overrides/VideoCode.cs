@@ -17,32 +17,29 @@ public partial class Overrides {
         DefineFunction(cs1, 0xC921, GetHnmResourceFlagNamePtrByIndexAXToBx_1000_C921_01C921);
         DefineFunction(cs1, 0xCA59, VideoPlayRelated_1000_CA59_01CA59);
         DefineFunction(cs1, 0xCC85, CheckIfHnmComplete_1000_CC85_01CC85);
+
+        // Harness fast-forward stubs: every override below has only the
+        // fast-forward path implemented — its non-harness fall-through
+        // just returns NearRet(), which would skip the engine's native
+        // HNM machinery (videos never render). Register them only when
+        // the harness env var is set.
+        if (!HarnessFastForwardHnm) {
+            return;
+        }
         DefineFunction(cs1, 0xC9F4, DoFrameAndCheckIfFrameAdvanced_1000_C9F4_01C9F4);
         DefineFunction(cs1, 0xCA1B, HnmLoad_1000_CA1B_01CA1B);
         DefineFunction(cs1, 0xCA60, HnmDoFrame_1000_CA60_01CA60);
         DefineFunction(cs1, 0xC9E8, HnmDoFrameSkippable_1000_C9E8_01C9E8);
         DefineFunction(cs1, 0xCA01, HnmCloseResource_1000_CA01_01CA01);
         DefineFunction(cs1, 0xDDF0, BootIntroWait_1000_DDF0_01DDF0);
-        // Boot-intro per-HNM load helpers — each ends with `jmp 0xCA1B`,
-        // which Spice86 doesn't intercept via DefineFunction. We
-        // override the load helpers themselves (entered via `call`)
-        // so our stub fires for the load AND its tail-chained
-        // hnm_load_ida. NearRet here pops the dispatcher's saved
-        // return and aborts the entire load chain.
         DefineFunction(cs1, 0x061C, LoadVirginHnm_1000_061C_01061C);
         DefineFunction(cs1, 0x064D, LoadCryoHnm_1000_064D_01064D);
         DefineFunction(cs1, 0x0658, LoadCryo2Hnm_1000_0658_010658);
         DefineFunction(cs1, 0x0678, LoadPresentHnm_1000_0678_010678);
         DefineFunction(cs1, 0x069E, LoadIntroHnm_1000_069E_01069E);
-        // TITLE replay helpers (records 9, 10) — both call play_*_HNM
-        // loops that we already short-circuit via CheckIfHnmComplete,
-        // but their entry function does its own per-record setup that
-        // can stall. Stub to NearRet under harness fast-fwd.
         DefineFunction(cs1, 0x06AA, PlayHnm86Frames_1000_06AA_0106AA);
         DefineFunction(cs1, 0x06BD, PlayHnmSkippable_1000_06BD_0106BD);
-        // IRULAN dispatcher (record 6 — different from regular HNM).
         DefineFunction(cs1, 0xCF1B, PlayIrulanHnm_1000_CF1B_01CF1B);
-        // MTG / PLANT / VER load helpers (records 12, 19, 29, 39, 41).
         DefineFunction(cs1, 0x06CE, LoadMtg1Hnm_1000_06CE_0106CE);
         DefineFunction(cs1, 0x06D3, LoadMtg2Hnm_1000_06D3_0106D3);
         DefineFunction(cs1, 0x06D8, LoadPlayMtg3Hnm_1000_06D8_0106D8);

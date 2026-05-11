@@ -152,7 +152,26 @@ public partial class Overrides : CSharpOverrideHelper {
     /// </remarks>
     private void DefineMemoryDumpsMapping() {
         DoOnTopOfInstruction(cs1, 0x000C, () => {
+            InstallSpuriousIrqStubs();
             DumpMemoryWithSuffix("_" + ConvertUtils.ToHex16WithoutX(cs1) + "_000C_After_driver_load");
+        });
+        DoOnTopOfInstruction(cs1, 0x100B, () => {
+            // First entry into new_game_init — sub-verb 10 fires this only when
+            // scene_id rolls to 1, so this captures the moment the engine
+            // crosses from boot-intro into the first interactive scene.
+            firstSceneDumpCount++;
+            if (firstSceneDumpCount <= 3) {
+                DumpMemoryWithSuffix("_" + ConvertUtils.ToHex16WithoutX(cs1) + "_100B_FirstScene_" + firstSceneDumpCount);
+            }
+        });
+        DoOnTopOfInstruction(cs1, 0x3AE9, () => {
+            // Fill47F8WithFF — fires on every scene enter/leave. Captures state
+            // at every scene-transition boundary so if the engine crashes during
+            // scene rendering, the latest dump is the state at scene entry.
+            sceneBoundaryDumpCount++;
+            if (sceneBoundaryDumpCount <= 6) {
+                DumpMemoryWithSuffix("_" + ConvertUtils.ToHex16WithoutX(cs1) + "_3AE9_SceneBoundary_" + sceneBoundaryDumpCount);
+            }
         });
         DoOnTopOfInstruction(cs4, 0x02DC, () => {
             callsTo02DB++;
@@ -169,6 +188,12 @@ public partial class Overrides : CSharpOverrideHelper {
     /// <summary>Counter for memory dumps at CS4:02DC to create unique filenames.</summary>
     private int callsTo02DB = 0;
 
+    /// <summary>Counter for first-scene memory dumps at cs1:0x100B; capped at 3.</summary>
+    private int firstSceneDumpCount = 0;
+
+    /// <summary>Counter for scene-boundary dumps at cs1:0x3AE9; capped at 6.</summary>
+    private int sceneBoundaryDumpCount = 0;
+
     /// <summary>Counter for memory dumps at CS4:03EE to create unique filenames.</summary>
     private int callsTo03ED = 0;
 
@@ -178,6 +203,26 @@ public partial class Overrides : CSharpOverrideHelper {
     /// <param name="suffix">Suffix to append to the dump filename for identification.</param>
     private void DumpMemoryWithSuffix(string suffix) {
         new MemoryDataExporter(Memory, Machine.CallbackHandler, Configuration, Configuration.RecordedDataDirectory, _loggerService).DumpMemory(suffix);
+    }
+
+    /// <summary>
+    /// Installs no-op IRET stubs for IRQ3..IRQ7 (INT 0x0B..0x0F).
+    /// Spice86's PIC fires INT 0x0F when the 8259 raises a spurious IRQ7 it can't identify,
+    /// which happens during long OPL3FM playback; without a handler in the IVT
+    /// Spice86 throws UnhandledOperationException. The same risk applies to other
+    /// unhandled-but-unmasked IRQ vectors. The IRET byte lives at cs5:0x0100
+    /// (well past Spice86's own provided-handler chain that occupies cs5:0x0000..0x0084)
+    /// and every patched IVT slot points there.
+    /// </summary>
+    private void InstallSpuriousIrqStubs() {
+        const ushort stubOffset = 0x0100;
+        uint stubLinear = (uint)(cs5 << 4) + stubOffset;
+        Memory.UInt8[stubLinear] = 0xCF;
+        foreach (byte vector in new byte[] { 0x0B, 0x0C, 0x0D, 0x0E, 0x0F }) {
+            uint ivtSlot = (uint)vector * 4;
+            Memory.UInt16[ivtSlot] = stubOffset;
+            Memory.UInt16[ivtSlot + 2] = cs5;
+        }
     }
 
     /// <summary>

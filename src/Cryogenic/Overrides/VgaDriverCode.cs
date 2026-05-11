@@ -174,6 +174,7 @@ public partial class Overrides {
     }
 
     public Action LoadPaletteInVgaDac_334B_0B68_034018(int gotoAddress) {
+        LogPaletteLoadEntry();
         // No jump, 49 lines in ghidra
         try {
             VgaCard vgaCard = Machine.VgaCard;
@@ -220,6 +221,7 @@ public partial class Overrides {
     }
 
     public Action MemcpyDSToESFor64000_334B_1B7C_03502C(int gotoAddress) {
+        LogFramebufferCopyEntry();
         // No jump, 22 lines in ghidra
         uint sourceAddress = MemoryUtils.ToPhysicalAddress(DS, 0);
         uint destinationAddress = MemoryUtils.ToPhysicalAddress(ES, 0);
@@ -229,6 +231,7 @@ public partial class Overrides {
     }
 
     public Action CopySquareOfPixels_334B_1B8E_03503E(int gotoAddress) {
+        LogBlitEntry();
         // No jump, 30 instructions 67 lines in ghidra
         // warning: we dont set registers at the end but no idea if their values are used or not.
         SetDiFromXYCordsDxBx_334B_0C10_0340C0(0);
