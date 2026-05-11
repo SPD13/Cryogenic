@@ -43,6 +43,7 @@ public partial class Overrides {
     /// for character conversations with animated portrait zooms.
     /// </remarks>
     public Action InitDialogue_1000_C85B_01C85B(int gotoAddress) {
+        LogDialogueInitEntry();
         ushort value = this.globalsOnDs.Get1138_CE7A_Word16_VideoPlayRelatedIndex();
         this.globalsOnDs.Set1138_476E_Word16(value);
         this.globalsOnDs.Set1138_4772_Word16_TimeBetweenFaceZooms(0x1770);

@@ -46,7 +46,14 @@ public partial class Overrides {
     /// describing the call's arguments.
     /// </summary>
     public void DefinePaletteLoggingOverrides() {
-        DoOnTopOfInstruction(cs2, 0xB68, LogPaletteLoadEntry);
+        // Only cs1:0xCA1B (hnm_load) is logged via DoOnTopOfInstruction because
+        // its DefineFunction override is gated off in non-harness mode. The
+        // other targets (palette, blit, script, scene_boundary, dialogue) all
+        // have C# DefineFunction overrides registered, which causes Spice86
+        // to dispatch to the C# method and skip any DoOnTopOfInstruction at
+        // the same address. For those, the log call is made from inside the
+        // override implementation (see VgaDriverCode, ScriptedSceneCode,
+        // UnknownCode, DialoguesCode).
         DoOnTopOfInstruction(cs1, 0xCA1B, LogHnmLoadEntry);
     }
 
@@ -138,12 +145,184 @@ public partial class Overrides {
             ushort hnmId = AX;
             StringBuilder sb = new();
             sb.Append("{\"t\":\"hnm\",\"seq\":").Append(_palLogEventCounter++);
+            sb.Append(",\"cycles\":").Append(State.Cycles);
             sb.Append(",\"hnmId\":").Append(hnmId);
             sb.Append(",\"hnmIdHex\":\"0x").Append(hnmId.ToString("X2")).Append('"');
             sb.Append('}');
             AppendLine(sb.ToString());
         } catch (Exception e) {
             _loggerService.Warning("PaletteLogging/hnm: {@Error}", e.Message);
+        }
+    }
+
+    /// <summary>
+    /// Hook at <c>CopySquareOfPixels</c> (cs2:0x1B8E) — the main sprite
+    /// blit dispatched by VgaFunc14/16 and direct callers. Captures src
+    /// segment, dest segment, X/Y, columns, rows. This is fine-grained
+    /// (every sprite paint), so the trace can get large.
+    /// </summary>
+    private void LogBlitEntry() {
+        EnsurePaletteLogInitialized();
+        try {
+            ushort srcSeg = DS;
+            ushort dstSeg = ES;
+            ushort x = DX;
+            ushort y = BX;
+            ushort cols = AX;
+            ushort rows = BP;
+            StringBuilder sb = new();
+            sb.Append("{\"t\":\"blit\",\"seq\":").Append(_palLogEventCounter++);
+            sb.Append(",\"cycles\":").Append(State.Cycles);
+            sb.Append(",\"srcSeg\":\"0x").Append(srcSeg.ToString("X4")).Append('"');
+            sb.Append(",\"dstSeg\":\"0x").Append(dstSeg.ToString("X4")).Append('"');
+            sb.Append(",\"x\":").Append(x);
+            sb.Append(",\"y\":").Append(y);
+            sb.Append(",\"cols\":").Append(cols);
+            sb.Append(",\"rows\":").Append(rows);
+            sb.Append('}');
+            AppendLine(sb.ToString());
+        } catch (Exception e) {
+            _loggerService.Warning("PaletteLogging/blit: {@Error}", e.Message);
+        }
+    }
+
+    /// <summary>
+    /// Hook at <c>LoadSceneSequenceDataIntoAXAndAdvanceSI</c> (cs1:0x93F) —
+    /// the scene-script VM's per-step instruction read. The script bytecode
+    /// lives in the code segment (CS); the byte-offset of the next opcode
+    /// is held in <c>ds[0x4854]</c>. Logs offset + the 8 bytes ahead so the
+    /// reconciler can decode which scene-script verb is executing.
+    /// </summary>
+    private void LogSceneScriptStepEntry() {
+        EnsurePaletteLogInitialized();
+        try {
+            ushort offset = globalsOnDs.Get1138_4854_Word16_SceneSequenceOffset();
+            ushort sceneId = (ushort)UInt8[DS, 0x2A];
+            uint streamLinear = MemoryUtils.ToPhysicalAddress(CS, offset);
+            byte[] head = new byte[8];
+            for (int i = 0; i < 8; i++) head[i] = UInt8[(uint)(streamLinear + i)];
+            StringBuilder sb = new();
+            sb.Append("{\"t\":\"script\",\"seq\":").Append(_palLogEventCounter++);
+            sb.Append(",\"cycles\":").Append(State.Cycles);
+            sb.Append(",\"sceneId\":").Append(sceneId);
+            sb.Append(",\"cs\":\"0x").Append(CS.ToString("X4")).Append('"');
+            sb.Append(",\"offset\":\"0x").Append(offset.ToString("X4")).Append('"');
+            sb.Append(",\"head\":\"").Append(ConvertUtils.ByteArrayToHexString(head)).Append('"');
+            sb.Append('}');
+            AppendLine(sb.ToString());
+        } catch (Exception e) {
+            _loggerService.Warning("PaletteLogging/script: {@Error}", e.Message);
+        }
+    }
+
+    /// <summary>
+    /// Framebuffer-copy event for <c>MemcpyDSToESFor64000</c> (cs2:0x1B7C) —
+    /// 64000-byte full-screen copies are how HNM frames and scene
+    /// backgrounds reach VRAM, so each event is a "new screen" marker.
+    /// Also auto-captures the sprite cache + compositing buffer at the
+    /// onset of each post-MTG1 palace-interlude phase (see Tech/32).
+    /// </summary>
+    private void LogFramebufferCopyEntry() {
+        EnsurePaletteLogInitialized();
+        try {
+            StringBuilder sb = new();
+            sb.Append("{\"t\":\"fbcopy\",\"seq\":").Append(_palLogEventCounter++);
+            sb.Append(",\"cycles\":").Append(State.Cycles);
+            sb.Append(",\"srcSeg\":\"0x").Append(DS.ToString("X4")).Append('"');
+            sb.Append(",\"dstSeg\":\"0x").Append(ES.ToString("X4")).Append('"');
+            sb.Append('}');
+            AppendLine(sb.ToString());
+
+            MaybeCapturePalaceScene();
+        } catch (Exception e) {
+            _loggerService.Warning("PaletteLogging/fbcopy: {@Error}", e.Message);
+        }
+    }
+
+    private static readonly long[] PalaceScenePhaseCycleThresholds = new[] {
+        1_100_000_000L,
+        1_230_000_000L,
+        1_335_000_000L,
+    };
+    private int _palaceSceneCapturedMask = 0;
+
+    /// <summary>
+    /// Dumps the sprite-cache segment (0x335B) and compositing back-buffer
+    /// segment (0x42FB) to disk the first time a FBCOPY to VGA fires past
+    /// each of the three palace-scene cycle thresholds. Only the present
+    /// path (ES == 0xA000) qualifies. Each scene yields two 64-KiB files
+    /// named <c>palace_scene_{A,B,C}_335B_cyclesNNN.bin</c> and similarly
+    /// for 0x42FB, in the working directory next to the trace.
+    /// </summary>
+    private void MaybeCapturePalaceScene() {
+        if (ES != 0xA000) return;
+        long cycles = (long)State.Cycles;
+        for (int i = 0; i < PalaceScenePhaseCycleThresholds.Length; i++) {
+            int bit = 1 << i;
+            if ((_palaceSceneCapturedMask & bit) != 0) continue;
+            if (cycles < PalaceScenePhaseCycleThresholds[i]) continue;
+            _palaceSceneCapturedMask |= bit;
+            char label = (char)('A' + i);
+            CaptureSegmentToFile(0x335B, $"palace_scene_{label}_335B_cycles{cycles}.bin");
+            CaptureSegmentToFile(0x42FB, $"palace_scene_{label}_42FB_cycles{cycles}.bin");
+            _loggerService.Information(
+                "PaletteLogging: captured palace scene {@Label} at cycles {@Cycles}",
+                label, cycles);
+            break;
+        }
+    }
+
+    private void CaptureSegmentToFile(ushort segment, string filename) {
+        try {
+            uint baseLinear = (uint)segment << 4;
+            byte[] data = new byte[65536];
+            for (uint i = 0; i < 65536; i++) {
+                data[i] = UInt8[baseLinear + i];
+            }
+            string path = Path.Combine(Environment.CurrentDirectory, filename);
+            File.WriteAllBytes(path, data);
+        } catch (Exception e) {
+            _loggerService.Warning("PaletteLogging/capture: {@Error}", e.Message);
+        }
+    }
+
+    /// <summary>
+    /// Hook at <c>Fill47F8WithFF</c> (cs1:0x3AE9) — fires on every scene
+    /// enter/leave. Cheap "section marker" to anchor blit/script events
+    /// to a scene transition timeline.
+    /// </summary>
+    private void LogSceneBoundaryEntry() {
+        EnsurePaletteLogInitialized();
+        try {
+            ushort sceneId = (ushort)UInt8[DS, 0x2A];
+            StringBuilder sb = new();
+            sb.Append("{\"t\":\"scene_boundary\",\"seq\":").Append(_palLogEventCounter++);
+            sb.Append(",\"cycles\":").Append(State.Cycles);
+            sb.Append(",\"sceneId\":").Append(sceneId);
+            sb.Append('}');
+            AppendLine(sb.ToString());
+        } catch (Exception e) {
+            _loggerService.Warning("PaletteLogging/scene_boundary: {@Error}", e.Message);
+        }
+    }
+
+    /// <summary>
+    /// Hook at <c>InitDialogue</c> (cs1:0xC85B) — dialogue tree entry.
+    /// Captures the AX register (dialogue entry id) so the reconciler
+    /// can match which DIALOGUE.HSQ entry is active.
+    /// </summary>
+    private void LogDialogueInitEntry() {
+        EnsurePaletteLogInitialized();
+        try {
+            ushort dialogueId = AX;
+            StringBuilder sb = new();
+            sb.Append("{\"t\":\"dialogue\",\"seq\":").Append(_palLogEventCounter++);
+            sb.Append(",\"cycles\":").Append(State.Cycles);
+            sb.Append(",\"dialogueId\":").Append(dialogueId);
+            sb.Append('}');
+            AppendLine(sb.ToString());
+        } catch (Exception e) {
+            _loggerService.Warning("PaletteLogging/dialogue: {@Error}", e.Message);
         }
     }
 }

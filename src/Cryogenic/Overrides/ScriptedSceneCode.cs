@@ -29,6 +29,7 @@ public partial class Overrides {
     /// is maintained in global variable DS:4854.
     /// </remarks>
     public Action LoadSceneSequenceDataIntoAXAndAdvanceSI_1000_093F_01093F(int gotoAddress) {
+        LogSceneScriptStepEntry();
         ushort offset = globalsOnDs.Get1138_4854_Word16_SceneSequenceOffset();
         ushort value = UInt16[CS, offset];
         AX = value;

@@ -65,6 +65,7 @@ public partial class Overrides {
     }
 
     public Action Fill47F8WithFF_1000_3AE9_013AE9(int gotoAddress) {
+        LogSceneBoundaryEntry();
         // Called when leaving or entering a scene. Does not seem to have any effect on game whatever the value is in this
         // area.
         uint address = MemoryUtils.ToPhysicalAddress(DS, 0x47F8);
