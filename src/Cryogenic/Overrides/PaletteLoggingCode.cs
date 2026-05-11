@@ -55,6 +55,16 @@ public partial class Overrides {
         // override implementation (see VgaDriverCode, ScriptedSceneCode,
         // UnknownCode, DialoguesCode).
         DoOnTopOfInstruction(cs1, 0xCA1B, LogHnmLoadEntry);
+        // Hook the VGA-driver entry-points that are registered with
+        // DefineFunction(...) STRING form (no C# override body) — those let
+        // the original assembly run, so DoOnTopOfInstruction fires. This
+        // catches sprite paint paths the cs2:0x1B8E (CopySquareOfPixels)
+        // hook misses: VgaFunc05Blit, VgaFunc12CopyRectangle,
+        // VgaFunc17ExplodeAndCenter, VgaFunc41CopyPalette2toPalette1.
+        DoOnTopOfInstruction(cs2, 0x10F, () => LogVgaCallEntry("VgaFunc05Blit"));
+        DoOnTopOfInstruction(cs2, 0x124, () => LogVgaCallEntry("VgaFunc12CopyRectangle"));
+        DoOnTopOfInstruction(cs2, 0x133, () => LogVgaCallEntry("VgaFunc17ExplodeAndCenter"));
+        DoOnTopOfInstruction(cs2, 0x17B, () => LogVgaCallEntry("VgaFunc41CopyPalette2toPalette1"));
     }
 
     private void EnsurePaletteLogInitialized() {
@@ -160,6 +170,12 @@ public partial class Overrides {
     /// blit dispatched by VgaFunc14/16 and direct callers. Captures src
     /// segment, dest segment, X/Y, columns, rows. This is fine-grained
     /// (every sprite paint), so the trace can get large.
+    ///
+    /// Also samples up to 64 bytes of the source pixel rect and emits a
+    /// short SHA-256 prefix so an offline matcher can reverse-lookup
+    /// which animation frame the engine was painting. Gated on the
+    /// palace-interlude cycle window to avoid expensive hashing across
+    /// the whole boot intro.
     /// </summary>
     private void LogBlitEntry() {
         EnsurePaletteLogInitialized();
@@ -179,6 +195,32 @@ public partial class Overrides {
             sb.Append(",\"y\":").Append(y);
             sb.Append(",\"cols\":").Append(cols);
             sb.Append(",\"rows\":").Append(rows);
+
+            // Capture full source bytes for PRESENT blits inside the palace
+            // window (src=0x42FB, dst=0xA000) — those are the bytes the
+            // user actually sees. The compose blits (src=0x335B) source
+            // a fixed buffer and don't help identify the active animation
+            // frame. Raw bytes (base64) let an offline matcher do
+            // pixel-by-pixel comparison against rendered atlas frames,
+            // ignoring background pixels (where the character composite
+            // is transparent).
+            long cycles = (long)State.Cycles;
+            if (cycles >= 1_000_000_000L && cycles <= 1_300_000_000L
+                && dstSeg == 0xA000
+                && rows > 0 && cols > 0 && rows * cols <= 8192) {
+                int width = rows;
+                int height = cols;
+                ushort vgaOff = globalsOnCsSegment0X2538.Get2538_01A3_Word16_VgaOffset();
+                ushort yClamped = (ushort)(y >= 200 ? 199 : y);
+                uint srcLinear = ((uint)srcSeg << 4) + (uint)(320 * yClamped + x + vgaOff);
+                byte[] data = new byte[width * height];
+                for (int row = 0; row < height; row++) {
+                    for (int col = 0; col < width; col++) {
+                        data[row * width + col] = UInt8[srcLinear + (uint)row * 320 + (uint)col];
+                    }
+                }
+                sb.Append(",\"srcBytes\":\"").Append(Convert.ToBase64String(data)).Append('"');
+            }
             sb.Append('}');
             AppendLine(sb.ToString());
         } catch (Exception e) {
@@ -312,6 +354,36 @@ public partial class Overrides {
             AppendLine(sb.ToString());
         } catch (Exception e) {
             _loggerService.Warning("PaletteLogging/scene_boundary: {@Error}", e.Message);
+        }
+    }
+
+    /// <summary>
+    /// Generic VGA-driver call-site logger. Captures the function label
+    /// plus the register state typically used to pass blit parameters
+    /// (AX/BX/CX/DX/SI/DI/BP plus DS/ES). Used for the VGA functions that
+    /// only have DefineFunction(...) STRING labels and no C# override,
+    /// so DoOnTopOfInstruction at their entry actually fires.
+    /// </summary>
+    private void LogVgaCallEntry(string label) {
+        EnsurePaletteLogInitialized();
+        try {
+            StringBuilder sb = new();
+            sb.Append("{\"t\":\"vga\",\"seq\":").Append(_palLogEventCounter++);
+            sb.Append(",\"cycles\":").Append(State.Cycles);
+            sb.Append(",\"label\":\"").Append(label).Append('"');
+            sb.Append(",\"AX\":\"0x").Append(AX.ToString("X4")).Append('"');
+            sb.Append(",\"BX\":\"0x").Append(BX.ToString("X4")).Append('"');
+            sb.Append(",\"CX\":\"0x").Append(CX.ToString("X4")).Append('"');
+            sb.Append(",\"DX\":\"0x").Append(DX.ToString("X4")).Append('"');
+            sb.Append(",\"SI\":\"0x").Append(SI.ToString("X4")).Append('"');
+            sb.Append(",\"DI\":\"0x").Append(DI.ToString("X4")).Append('"');
+            sb.Append(",\"BP\":\"0x").Append(BP.ToString("X4")).Append('"');
+            sb.Append(",\"DS\":\"0x").Append(DS.ToString("X4")).Append('"');
+            sb.Append(",\"ES\":\"0x").Append(ES.ToString("X4")).Append('"');
+            sb.Append('}');
+            AppendLine(sb.ToString());
+        } catch (Exception e) {
+            _loggerService.Warning("PaletteLogging/vga: {@Error}", e.Message);
         }
     }
 
