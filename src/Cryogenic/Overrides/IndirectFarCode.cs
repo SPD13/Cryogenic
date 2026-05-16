@@ -40,6 +40,77 @@ public partial class Overrides {
         DefineFunction(cs1, 0x0D0D, FarCall3951OrJmp0D23_1000_0D0D_010D0D);
         DefineFunction(cs1, 0xC477, GfxCopyRectAtSi_1000_C477_01C477);
         DefineFunction(cs1, 0xC4AA, GfxCopyRectToScreen_1000_C4AA_01C4AA);
+        DefineFunction(cs1, 0xADED, FarCall397DClampBl_1000_ADED_01ADED);
+        DefineFunction(cs1, 0xADE0, FarCall397DAlt_1000_ADE0_01ADE0);
+        DefineFunction(cs1, 0xA637, FarCall39A5_1000_A637_01A637);
+        DefineFunction(cs1, 0xA650, FarCall3985_1000_A650_01A650);
+    }
+
+    /// <summary>cs1:0xADED — <c>ax=0x0190; bl=[0x2896]; bh=[0x28AE];
+    /// if bl&lt;4 bl=4; call far [0x397D]; ret</c>. Continuation = raw asm
+    /// <c>C3</c> @cs1:0xAE03.</summary>
+    public System.Action FarCall397DClampBl_1000_ADED_01ADED(int gotoAddress) {
+        AX = 0x0190;
+        byte bl = UInt8[DS, 0x2896];
+        byte bh = UInt8[DS, 0x28AE];
+        if (bl < 0x04) {                                  // cmp bl,4 ; jnc ADFF
+            bl = 0x04;
+        }
+        BX = (ushort)((bh << 8) | bl);
+        ushort off = UInt16[DS, 0x397D];
+        ushort seg = UInt16[DS, 0x397F];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0xAE03;
+        return FarJump(seg, off);
+    }
+
+    /// <summary>cs1:0xADE0 — <c>ax=0x0064; bl=[0x289E]; bh=[0x28B6];
+    /// jmp 0xADF8</c> (shares 0xADED's clamp+call-far tail, run as raw asm).</summary>
+    public System.Action FarCall397DAlt_1000_ADE0_01ADE0(int gotoAddress) {
+        AX = 0x0064;
+        byte bl = UInt8[DS, 0x289E];
+        byte bh = UInt8[DS, 0x28B6];
+        BX = (ushort)((bh << 8) | bl);
+        return NearJump(0xADF8);
+    }
+
+    /// <summary>cs1:0xA637 — if <c>(word[0xDBC8] &amp; 4)==0</c> set
+    /// <c>[0x288E]=0xFF</c>; then <c>al=[0x288E]; ah=[0x28A6]; call far [0x39A5];
+    /// ret</c>. Continuation = raw asm <c>C3</c> @cs1:0xA64F.</summary>
+    public System.Action FarCall39A5_1000_A637_01A637(int gotoAddress) {
+        if ((UInt16[DS, 0xDBC8] & 0x0004) == 0) {         // test ; jnz A644
+            UInt8[DS, 0x288E] = 0xFF;
+        }
+        byte al = UInt8[DS, 0x288E];
+        byte ah = UInt8[DS, 0x28A6];
+        AX = (ushort)((ah << 8) | al);
+        ushort off = UInt16[DS, 0x39A5];
+        ushort seg = UInt16[DS, 0x39A7];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0xA64F;
+        return FarJump(seg, off);
+    }
+
+    /// <summary>cs1:0xA650 — if <c>(word[0xDBC8] &amp; 0x400)==0</c> set
+    /// <c>[0x2896]=[0x289E]=0xFF</c>; then <c>ah=[0x28AE]; al=[0x2896];
+    /// if al&lt;4 al=4; call far [0x3985]; ret</c>. Continuation = raw asm
+    /// <c>C3</c> @cs1:0xA671.</summary>
+    public System.Action FarCall3985_1000_A650_01A650(int gotoAddress) {
+        if ((UInt16[DS, 0xDBC8] & 0x0400) == 0) {         // test ; jnz A660
+            UInt8[DS, 0x2896] = 0xFF;
+            UInt8[DS, 0x289E] = 0xFF;
+        }
+        byte ah = UInt8[DS, 0x28AE];
+        byte al = UInt8[DS, 0x2896];
+        if (al < 0x04) {                                  // cmp al,4 ; jnc A66D
+            al = 0x04;
+        }
+        AX = (ushort)((ah << 8) | al);
+        ushort off = UInt16[DS, 0x3985];
+        ushort seg = UInt16[DS, 0x3987];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0xA671;
+        return FarJump(seg, off);
     }
 
     // Shared shape (gfx rect copy): read 4-word rect from [si]; bounds-check
