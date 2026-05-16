@@ -67,9 +67,9 @@ public partial class Overrides {
         DefineFunction(cs1, 0xC13E, "open_sprite_sheet_ida");
         DefineFunction(cs1, 0xC1BA, "hnm_apply_palette_ida");
         DefineFunction(cs1, 0xC22F, "draw_sprite_ida");
-        DefineFunction(cs1, 0xC477, "gfx_copy_rect_at_si_ida");
+        // cs1:0xC477 — real C# override in IndirectFarCode.cs (GfxCopyRectAtSi).
         // cs1:0xC49A — real C# override in IndirectFarCode.cs (GfxCopyFramebufferToScreen).
-        DefineFunction(cs1, 0xC4AA, "gfx_copy_rect_to_screen_ida");
+        // cs1:0xC4AA — real C# override in IndirectFarCode.cs (GfxCopyRectToScreen).
         // cs1:0xC4CD — real C# override in IndirectFarCode.cs (GfxCopyFramebufToScreen).
         DefineFunction(cs1, 0xC4F0, "rect_at_si_to_regs_ida");
         DefineFunction(cs1, 0xC92B, "hnm_reset_and_read_header_ida");
