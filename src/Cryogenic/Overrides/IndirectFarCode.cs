@@ -51,6 +51,65 @@ public partial class Overrides {
         DefineFunction(cs1, 0xC43E, BlitSi1470_1000_C43E_01C43E);
         DefineFunction(cs1, 0xC443, BlitSiD834_1000_C443_01C443);
         DefineFunction(cs1, 0xC474, RectCopySi1470_1000_C474_01C474);
+        DefineFunction(cs1, 0xC53E, FarCall3901_1000_C53E_01C53E);
+        DefineFunction(cs1, 0xD741, FarCall38DDIfBelow3_1000_D741_01D741);
+        DefineFunction(cs1, 0xEFBA, FarCall3981Guarded_1000_EFBA_01EFBA);
+    }
+
+    /// <summary>cs1:0xC53E — <c>si=0x276A; bp=[0x2772]; al=[0xDBE4];
+    /// es=[0xDBDA]; call far [0x3901]; ret</c>. Continuation = raw asm
+    /// <c>C3</c> @cs1:0xC550.</summary>
+    public System.Action FarCall3901_1000_C53E_01C53E(int gotoAddress) {
+        SI = 0x276A;
+        BP = UInt16[DS, 0x2772];
+        AL = UInt8[DS, 0xDBE4];
+        ES = UInt16[DS, 0xDBDA];
+        ushort off = UInt16[DS, 0x3901];
+        ushort seg = UInt16[DS, 0x3903];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0xC550;
+        return FarJump(seg, off);
+    }
+
+    /// <summary>cs1:0xD741 — <c>ax=[0x1B0C]-3; if ax&gt;=3 (unsigned) ret; else
+    /// si=0x2458; es=[0xDBD8]; al=0xF0; call far [0x38DD]; ret</c>. Continuation =
+    /// raw asm <c>C3</c> @cs1:0xD759.</summary>
+    public System.Action FarCall38DDIfBelow3_1000_D741_01D741(int gotoAddress) {
+        ushort ax = (ushort)(UInt16[DS, 0x1B0C] - 3);
+        AX = ax;
+        if (ax >= 0x0003) {                               // cmp ax,3 ; jnc D759
+            CarryFlag = false;
+            return NearRet();
+        }
+        SI = 0x2458;
+        ES = UInt16[DS, 0xDBD8];
+        AL = 0xF0;
+        ushort off = UInt16[DS, 0x38DD];
+        ushort seg = UInt16[DS, 0x38DF];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0xD759;
+        return FarJump(seg, off);
+    }
+
+    /// <summary>
+    /// cs1:0xEFBA — <c>push bx; if (byte[0x2943]&amp;0x10) {pop bx; ret}; push cx;
+    /// call far [0x3981]</c>. Continuation = raw asm
+    /// <c>mov [0xDBCD],al; mov [0xDBCE],bx; mov [0xDBD0],cx; pop cx; pop bx; ret</c>
+    /// @cs1:0xEFC7 (pops the pushed cx then bx).
+    /// </summary>
+    public System.Action FarCall3981Guarded_1000_EFBA_01EFBA(int gotoAddress) {
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = BX;       // push bx
+        if ((UInt8[DS, 0x2943] & 0x10) != 0) {            // test ; jnz EFD3
+            BX = UInt16[SS, SP];                          // pop bx
+            SP = (ushort)(SP + 2);
+            return NearRet();
+        }
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = CX;       // push cx
+        ushort off = UInt16[DS, 0x3981];
+        ushort seg = UInt16[DS, 0x3983];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0xEFC7;
+        return FarJump(seg, off);
     }
 
     // 0xD42F/34/39/3E — parameterized entries that set CX then jump into the
