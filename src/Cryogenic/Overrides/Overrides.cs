@@ -1,10 +1,14 @@
-namespace Cryogenic.Overrides;
+﻿namespace Cryogenic.Overrides;
+
+using Cryogenic.Services;
 
 using Globals;
 
+using Mt32DriverDebug;
+
 using Spice86.Core.CLI;
 using Spice86.Core.Emulator.Function;
-using Spice86.Core.Emulator.Function.Dump;
+using Spice86.Core.Emulator.StateSerialization;
 using Spice86.Core.Emulator.VM;
 using Spice86.Shared.Emulator.Memory;
 using Spice86.Shared.Interfaces;
@@ -38,227 +42,215 @@ using System.Collections.Generic;
 /// </para>
 /// </remarks>
 public partial class Overrides : CSharpOverrideHelper {
-    /// <summary>Main game code segment (0x1000).</summary>
-    protected ushort cs1;
+	/// <summary>Main game code segment (0x1000).</summary>
+	protected ushort cs1;
 
-    /// <summary>VGA driver segment (remapped to 0xD000).</summary>
-    protected ushort cs2;
+	/// <summary>VGA driver segment (remapped to 0xD000).</summary>
+	protected ushort cs2;
 
-    /// <summary>PCM audio driver segment (remapped to 0xE000).</summary>
-    protected ushort cs3;
+	/// <summary>PCM audio driver segment (remapped to 0xE000).</summary>
+	protected ushort cs3;
 
-    /// <summary>MIDI music driver segment (remapped to 0xE000, shares with cs3).</summary>
-    protected ushort cs4;
+	/// <summary>MIDI music driver segment (remapped to 0xE000, shares with cs3).</summary>
+	protected ushort cs4;
 
-    /// <summary>BIOS/IRQ interrupt handler segment (0x0800).</summary>
-    protected ushort cs5;
+	/// <summary>BIOS/IRQ interrupt handler segment (0x0800).</summary>
+	protected ushort cs5;
 
-    /// <summary>Accessor for game global variables stored in the DS segment.</summary>
-    private ExtraGlobalsOnDs globalsOnDs;
+	/// <summary>Accessor for game global variables stored in the DS segment.</summary>
+	private ExtraGlobalsOnDs globalsOnDs;
 
-    /// <summary>Accessor for game global variables stored in CS segment 0x2538.</summary>
-    private ExtraGlobalsOnCsSegment0x2538 globalsOnCsSegment0X2538;
+	/// <summary>Accessor for game global variables stored in CS segment 0x2538.</summary>
+	private ExtraGlobalsOnCsSegment0x2538 globalsOnCsSegment0X2538;
 
-    /// <summary>
-    /// Initializes the override system and registers all function replacements and hooks.
-    /// </summary>
-    /// <param name="functionInformations">Dictionary to populate with function override mappings.</param>
-    /// <param name="entrySegment">The segment where DNCDPRG.EXE was loaded (unused but required by interface).</param>
-    /// <param name="machine">The emulated machine providing access to CPU, memory, and devices.</param>
-    /// <param name="loggerService">Service for logging debug information during override execution.</param>
-    /// <param name="configuration">Spice86 configuration containing runtime settings.</param>
-    public Overrides(Dictionary<SegmentedAddress, FunctionInformation> functionInformations, ushort entrySegment,
-        Machine machine, ILoggerService loggerService, Configuration configuration) : 
-        base(functionInformations, machine,  loggerService, configuration) {
-        // Main code
-        this.cs1 = 0x1000;
-        // Vga driver is remapped here
-        this.cs2 = DriverLoadToolbox.DRIVER1_SEGMENT;
-        // PCM driver
-        this.cs3 = DriverLoadToolbox.DRIVER2_SEGMENT;
-        // Midi driver
-        this.cs4 = DriverLoadToolbox.DRIVER2_SEGMENT;
-        // Bios, This does not depend on the entry segment. 
-        this.cs5 = DriverLoadToolbox.INTERRUPT_HANDLER_SEGMENT;
-        globalsOnDs = new ExtraGlobalsOnDs(machine.Memory, machine.Cpu.State.SegmentRegisters);
-        globalsOnCsSegment0X2538 = new ExtraGlobalsOnCsSegment0x2538(machine.Memory, cs2);
+	/// <summary>Service managing the music driver debug window.</summary>
+	private Mt32DriverWindowService mt32DriverWindowService;
 
-        DefineOverrides();
-        DefineStaticDefinitionsFunctions();
-    }
+	/// <summary>
+	/// Replacement audio player for the MT-32 music stream.
+	/// <c>null</c> when the feature is disabled (no <c>--MusicFolder</c> arg, missing folder,
+	/// or <c>EnableMt32CSharpFunctionReplacement</c> is <c>false</c>).
+	/// </summary>
+	private MusicFolderPlayer? _musicFolderPlayer;
 
-    /// <summary>
-    /// Registers all override functions and inline hooks across different game subsystems.
-    /// </summary>
-    /// <remarks>
-    /// This method orchestrates the registration of overrides for:
-    /// <list type="bullet">
-    /// <item><description>Data structures and memory management</description></item>
-    /// <item><description>VGA graphics operations</description></item>
-    /// <item><description>Dialogue system</description></item>
-    /// <item><description>Display and rendering</description></item>
-    /// <item><description>HNM video playback</description></item>
-    /// <item><description>Initialization sequences</description></item>
-    /// <item><description>Map rendering and navigation</description></item>
-    /// <item><description>Menu system</description></item>
-    /// <item><description>Scripted scenes and cutscenes</description></item>
-    /// <item><description>Time and timer management</description></item>
-    /// <item><description>MT-32 MIDI driver</description></item>
-    /// <item><description>Driver remapping infrastructure</description></item>
-    /// <item><description>Memory dump triggers for debugging</description></item>
-    /// </list>
-    /// Generated code overrides are commented out as they crash for various reasons.
-    /// </remarks>
-    public void DefineOverrides() {
-        DefineDataStructureOverrides();
-        DefineVgaDriverCodeOverrides();
-        DefineDialoguesCodeOverrides();
-        DefineDisplayCodeOverrides();
-        DefineHnmCodeOverrides();
-        DefineInitCodeOverrides();
-        DefineMapCodeOverrides();
-        DefineMenuCodeOverrides();
-        DefineScriptedSceneCodeOverrides();
-        DefineScriptVmCodeOverrides();
-        DefineOuterVmHelpersCodeOverrides();
-        DefineOuterVmCodeOverrides();
-        DefineInputCodeOverrides();
-        DefineSceneChainCodeOverrides();
-        DefineAudioCodeOverrides();
-        DefineMemoryResourceCodeOverrides();
-        DefineTimeCodeOverrides();
-        DefineTimerCodeOverrides();
-        DefineUnknownCodeOverrides();
-        DefineVideoCodeOverrides();
+	/// <summary>
+	/// Initializes the override system and registers all function replacements and hooks.
+	/// </summary>
+	/// <param name="functionInformations">Dictionary to populate with function override mappings.</param>
+	/// <param name="entrySegment">The segment where DNCDPRG.EXE was loaded (unused but required by interface).</param>
+	/// <param name="machine">The emulated machine providing access to CPU, memory, and devices.</param>
+	/// <param name="loggerService">Service for logging debug information during override execution.</param>
+	/// <param name="configuration">Spice86 configuration containing runtime settings.</param>
+	public Overrides(IDictionary<SegmentedAddress, FunctionInformation> functionInformations, ushort entrySegment,
+		Machine machine, ILoggerService loggerService, Configuration configuration) :
+		base(functionInformations, machine, loggerService, configuration) {
+		// Main code
+		this.cs1 = 0x1000;
+		// Vga driver is remapped here
+		this.cs2 = DriverLoadToolbox.DRIVER1_SEGMENT;
+		// PCM driver
+		this.cs3 = DriverLoadToolbox.DRIVER2_SEGMENT;
+		// Midi driver
+		this.cs4 = DriverLoadToolbox.DRIVER2_SEGMENT;
+		// Bios, This does not depend on the entry segment. 
+		this.cs5 = DriverLoadToolbox.INTERRUPT_HANDLER_SEGMENT;
+		globalsOnDs = new ExtraGlobalsOnDs(machine.Memory, machine.CpuState.SegmentRegisters);
+		globalsOnCsSegment0X2538 = new ExtraGlobalsOnCsSegment0x2538(machine.Memory, cs2);
 
-        DefineDriversRemapping();
-        DetectDriversEntryPoints();
-        // Dump memory at the proper time. Too soon and drivers wont be loaded, too late and init code will be erased
-        DefineMemoryDumpsMapping();
-        DefineMT32DriverCodeOverrides();
-        // Runtime trace hooks: log palette + HNM load events for the asset
-        // extractor to reconcile into per-cinematic palette pairings.
-        // See DOCUMENTATION/Tech/23 for why this can't be done statically.
-        DefinePaletteLoggingOverrides();
-        
-        // Generated code, crashes for various reasons
-        //DefineGeneratedCodeOverrides();
-    }
-    
-    /// <summary>
-    /// Registers memory dump triggers at strategic points during game initialization.
-    /// </summary>
-    /// <remarks>
-    /// Memory dumps are triggered at specific addresses to capture game state:
-    /// <list type="bullet">
-    /// <item><description>After driver loading (CS1:000C)</description></item>
-    /// <item><description>After self-modifying code updates (CS4:02DC and CS4:03EE)</description></item>
-    /// </list>
-    /// Dumps must be timed carefully - too early and drivers won't be loaded,
-    /// too late and initialization code will be erased by self-modifying code.
-    /// </remarks>
-    private void DefineMemoryDumpsMapping() {
-        DoOnTopOfInstruction(cs1, 0x000C, () => {
-            InstallSpuriousIrqStubs();
-            DumpMemoryWithSuffix("_" + ConvertUtils.ToHex16WithoutX(cs1) + "_000C_After_driver_load");
-        });
-        DoOnTopOfInstruction(cs1, 0x100B, () => {
-            // First entry into new_game_init — sub-verb 10 fires this only when
-            // scene_id rolls to 1, so this captures the moment the engine
-            // crosses from boot-intro into the first interactive scene.
-            firstSceneDumpCount++;
-            if (firstSceneDumpCount <= 3) {
-                DumpMemoryWithSuffix("_" + ConvertUtils.ToHex16WithoutX(cs1) + "_100B_FirstScene_" + firstSceneDumpCount);
-            }
-        });
-        DoOnTopOfInstruction(cs1, 0x3AE9, () => {
-            // Fill47F8WithFF — fires on every scene enter/leave. Captures state
-            // at every scene-transition boundary so if the engine crashes during
-            // scene rendering, the latest dump is the state at scene entry.
-            sceneBoundaryDumpCount++;
-            if (sceneBoundaryDumpCount <= 6) {
-                DumpMemoryWithSuffix("_" + ConvertUtils.ToHex16WithoutX(cs1) + "_3AE9_SceneBoundary_" + sceneBoundaryDumpCount);
-            }
-        });
-        DoOnTopOfInstruction(cs4, 0x02DC, () => {
-            callsTo02DB++;
-            DumpMemoryWithSuffix("_" + ConvertUtils.ToHex16WithoutX(cs4) + "_02DC_After_code_modification_" +
-                                 callsTo02DB);
-        });
-        DoOnTopOfInstruction(cs4, 0x03EE, () => {
-            callsTo03ED++;
-            DumpMemoryWithSuffix("_" + ConvertUtils.ToHex16WithoutX(cs4) + "_03EE_After_code_modification_" +
-                                 callsTo03ED);
-        });
-    }
+		// Must run before DefineOverrides so DefineMT32DriverCodeOverrides sees the correct flag.
+		DetectMt32DriverEnabled();
+		DefineOverrides();
+		DefineStaticDefinitionsFunctions();
+		InitializeMusicFolderPlayer();
 
-    /// <summary>Counter for memory dumps at CS4:02DC to create unique filenames.</summary>
-    private int callsTo02DB = 0;
+		// Show the music driver debug window via Spice86's AdditionalWindow API.
+		// Active regardless of whether C# driver overrides are enabled.
+		// Detect driver type from the -a (ExeArgs) command-line argument prefix.
+		MusicDriverType musicDriverType = MusicDriverDetection.DetectFromExeArgs(Configuration.ExeArgs ?? "");
+		GameAudioState gameAudio = new GameAudioState(machine.Memory);
+		IMusicDriverState driverState = MusicDriverDetection.IsOplDriver(musicDriverType)
+			? new AdpDriverState(machine.Memory, 0x5BAE)
+			: new DnmidDriverState(machine.Memory, 0x5BAE);
+		mt32DriverWindowService = new Mt32DriverWindowService(driverState, gameAudio);
+		mt32DriverWindowService.ShowWindow();
+	}
 
-    /// <summary>Counter for first-scene memory dumps at cs1:0x100B; capped at 3.</summary>
-    private int firstSceneDumpCount = 0;
+	/// <summary>
+	/// Registers all override functions and inline hooks across different game subsystems.
+	/// </summary>
+	/// <remarks>
+	/// This method orchestrates the registration of overrides for:
+	/// <list type="bullet">
+	/// <item><description>Data structures and memory management</description></item>
+	/// <item><description>VGA graphics operations</description></item>
+	/// <item><description>Dialogue system</description></item>
+	/// <item><description>Display and rendering</description></item>
+	/// <item><description>HNM video playback</description></item>
+	/// <item><description>Initialization sequences</description></item>
+	/// <item><description>Map rendering and navigation</description></item>
+	/// <item><description>Menu system</description></item>
+	/// <item><description>Scripted scenes and cutscenes</description></item>
+	/// <item><description>Time and timer management</description></item>
+	/// <item><description>MT-32 MIDI driver</description></item>
+	/// <item><description>Driver remapping infrastructure</description></item>
+	/// <item><description>Memory dump triggers for debugging</description></item>
+	/// </list>
+	/// Generated code overrides are commented out as they crash for various reasons.
+	/// </remarks>
+	public void DefineOverrides() {
+		DefineDataStructureOverrides();
+		DefineVgaDriverCodeOverrides();
+		DefineDialoguesCodeOverrides();
+		DefineDisplayCodeOverrides();
+		DefineHnmCodeOverrides();
+		DefineInitCodeOverrides();
+		DefineMapCodeOverrides();
+		DefineMenuCodeOverrides();
+		DefineScriptedSceneCodeOverrides();
+		DefineTimeCodeOverrides();
+		DefineTimerCodeOverrides();
+		DefineUnknownCodeOverrides();
+		DefineVideoCodeOverrides();
+		// Phase 27+ C# port batch — script/dialogue VMs, scene chain, input,
+		// audio, memory/resource helpers (see Plans/09).
+		DefineScriptVmCodeOverrides();
+		DefineOuterVmCodeOverrides();
+		DefineOuterVmHelpersCodeOverrides();
+		DefineSceneChainCodeOverrides();
+		DefineInputCodeOverrides();
+		DefineAudioCodeOverrides();
+		DefineMemoryResourceCodeOverrides();
 
-    /// <summary>Counter for scene-boundary dumps at cs1:0x3AE9; capped at 6.</summary>
-    private int sceneBoundaryDumpCount = 0;
+		DefineDriversRemapping();
+		DetectDriversEntryPoints();
+		// MT-32 MIDI driver is always remapped to F000 by DriverLoadToolbox hooks.
+		// Register overrides eagerly at F000 so they are active when the driver loads.
+		DefineMT32DriverCodeOverrides();
+		// DNADP (AdLib Pro) driver observation hooks on the live segment (0x5BAE).
+		// Phase 1: observation-only (call counters, OPL traces, scheduler state).
+		DefineAdpDriverCodeOverrides();
+		// Dump memory at the proper time. Too soon and drivers wont be loaded, too late and init code will be erased
+		DefineMemoryDumpsMapping();
 
-    /// <summary>Counter for memory dumps at CS4:03EE to create unique filenames.</summary>
-    private int callsTo03ED = 0;
+		// Generated code, crashes for various reasons
+		//DefineGeneratedCodeOverrides();
+	}
 
-    /// <summary>
-    /// Exports a memory dump with the specified filename suffix.
-    /// </summary>
-    /// <param name="suffix">Suffix to append to the dump filename for identification.</param>
-    private void DumpMemoryWithSuffix(string suffix) {
-        new MemoryDataExporter(Memory, Machine.CallbackHandler, Configuration, Configuration.RecordedDataDirectory, _loggerService).DumpMemory(suffix);
-    }
+	/// <summary>
+	/// Registers memory dump triggers at strategic points during game initialization.
+	/// </summary>
+	/// <remarks>
+	/// Memory dumps are triggered at specific addresses to capture game state:
+	/// <list type="bullet">
+	/// <item><description>After driver loading (CS1:000C)</description></item>
+	/// <item><description>After self-modifying code updates (CS4:02DC and CS4:03EE)</description></item>
+	/// </list>
+	/// Dumps must be timed carefully - too early and drivers won't be loaded,
+	/// too late and initialization code will be erased by self-modifying code.
+	/// </remarks>
+	private void DefineMemoryDumpsMapping() {
+		DoOnTopOfInstruction(cs1, 0x000C, () => {
+			DumpMemoryWithSuffix("_" + ConvertUtils.ToHex16WithoutX(cs1) + "_000C_After_driver_load");
+		});
+		DoOnTopOfInstruction(cs4, 0x02DC, () => {
+			callsTo02DB++;
+			DumpMemoryWithSuffix("_" + ConvertUtils.ToHex16WithoutX(cs4) + "_02DC_After_code_modification_" +
+								 callsTo02DB);
+		});
+		DoOnTopOfInstruction(cs4, 0x03EE, () => {
+			callsTo03ED++;
+			DumpMemoryWithSuffix("_" + ConvertUtils.ToHex16WithoutX(cs4) + "_03EE_After_code_modification_" +
+								 callsTo03ED);
+		});
+	}
 
-    /// <summary>
-    /// Installs no-op IRET stubs for IRQ3..IRQ7 (INT 0x0B..0x0F).
-    /// Spice86's PIC fires INT 0x0F when the 8259 raises a spurious IRQ7 it can't identify,
-    /// which happens during long OPL3FM playback; without a handler in the IVT
-    /// Spice86 throws UnhandledOperationException. The same risk applies to other
-    /// unhandled-but-unmasked IRQ vectors. The IRET byte lives at cs5:0x0100
-    /// (well past Spice86's own provided-handler chain that occupies cs5:0x0000..0x0084)
-    /// and every patched IVT slot points there.
-    /// </summary>
-    private void InstallSpuriousIrqStubs() {
-        const ushort stubOffset = 0x0100;
-        uint stubLinear = (uint)(cs5 << 4) + stubOffset;
-        Memory.UInt8[stubLinear] = 0xCF;
-        foreach (byte vector in new byte[] { 0x0B, 0x0C, 0x0D, 0x0E, 0x0F }) {
-            uint ivtSlot = (uint)vector * 4;
-            Memory.UInt16[ivtSlot] = stubOffset;
-            Memory.UInt16[ivtSlot + 2] = cs5;
-        }
-    }
+	/// <summary>Counter for memory dumps at CS4:02DC to create unique filenames.</summary>
+	private int callsTo02DB = 0;
 
-    /// <summary>
-    /// Registers hooks for driver remapping at the beginning and end of the driver load routine.
-    /// </summary>
-    /// <remarks>
-    /// Injects calls to <see cref="DriverLoadToolbox.RemapDrivers"/> at CS1:E57B
-    /// and <see cref="DriverLoadToolbox.ResetAllocator"/> at CS1:E593 to control
-    /// driver segment allocation.
-    /// </remarks>
-    private void DefineDriversRemapping() {
-        DoOnTopOfInstruction(cs1, 0xE57B, () => {
-            DriverLoadToolbox.RemapDrivers(State, Memory);
-        });
-        DoOnTopOfInstruction(cs1, 0xE593, () => {
-            DriverLoadToolbox.ResetAllocator(State, Memory);
-        });
-    }
+	/// <summary>Counter for memory dumps at CS4:03EE to create unique filenames.</summary>
+	private int callsTo03ED = 0;
 
-    /// <summary>
-    /// Registers a hook to automatically detect and define driver entry point functions.
-    /// </summary>
-    /// <remarks>
-    /// Injects a call to <see cref="DriverLoadToolbox.ReadDriverFunctionTable"/> at CS1:E589
-    /// to parse driver export tables and register their functions for tracing.
-    /// </remarks>
-    private void DetectDriversEntryPoints() {
-        DoOnTopOfInstruction(cs1, 0xE589, () => {
-            DriverLoadToolbox.ReadDriverFunctionTable(State, Memory, this);
-        });
-    }
+	/// <summary>
+	/// Exports a memory dump with the specified filename suffix.
+	/// </summary>
+	/// <param name="suffix">Suffix to append to the dump filename for identification.</param>
+	private void DumpMemoryWithSuffix(string suffix) {
+		string dumpDirectory = Configuration.RecordedDataDirectory ?? ".";
+		if (!Directory.Exists(dumpDirectory)) {
+			Directory.CreateDirectory(dumpDirectory);
+		}
+		string path = Path.Combine(dumpDirectory, $"spice86dumpMemoryDump{suffix}.bin");
+		new MemoryDataExporter(Memory, Machine.CallbackHandler, Configuration, _loggerService).Write(path);
+	}
+
+	/// <summary>
+	/// Registers hooks for driver remapping at the beginning and end of the driver load routine.
+	/// </summary>
+	/// <remarks>
+	/// Injects calls to <see cref="DriverLoadToolbox.RemapDrivers"/> at CS1:E57B
+	/// and <see cref="DriverLoadToolbox.ResetAllocator"/> at CS1:E593 to control
+	/// driver segment allocation.
+	/// </remarks>
+	private void DefineDriversRemapping() {
+		DoOnTopOfInstruction(cs1, 0xE57B, () => {
+			DriverLoadToolbox.RemapDrivers(State, Memory);
+		});
+		DoOnTopOfInstruction(cs1, 0xE593, () => {
+			DriverLoadToolbox.ResetAllocator(State, Memory);
+		});
+	}
+
+	/// <summary>
+	/// Registers a hook to parse driver entry tables for tracing only.
+	/// </summary>
+	/// <remarks>
+	/// Injects a call to <see cref="DriverLoadToolbox.ReadDriverFunctionTable"/> at CS1:E589
+	/// to register driver export names for tracing/debugging. MT-32 overrides are registered
+	/// eagerly at startup, not lazily.
+	/// </remarks>
+	private void DetectDriversEntryPoints() {
+		DoOnTopOfInstruction(cs1, 0xE589, () => {
+			DriverLoadToolbox.ReadDriverFunctionTable(State, Memory, this);
+		});
+	}
 }

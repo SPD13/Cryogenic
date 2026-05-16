@@ -79,7 +79,13 @@ public sealed class CallTrace {
             // doesn't expose these publicly, so we use reflection. If the layout changes in a
             // future Spice86 version, this just degrades to "no flow recorder" — the address-set
             // hook layer still works.
-            Cpu cpu = machine.Cpu;
+            // Spice86 13.x removed the public Machine.Cpu property/type; reflect for it
+            // too (same graceful-degradation contract as the rest of this method).
+            object? cpu = GetFieldOrProperty(machine, "Cpu") ?? GetFieldOrProperty(machine, "_cpu");
+            if (cpu is null) {
+                Console.Error.WriteLine("[harness] flow recorder: cannot find Cpu on Machine");
+                return;
+            }
             object? handler = GetFieldOrProperty(cpu, "FunctionHandler") ?? GetFieldOrProperty(cpu, "_functionHandler");
             if (handler is null) {
                 Console.Error.WriteLine("[harness] flow recorder: cannot find FunctionHandler on Cpu");

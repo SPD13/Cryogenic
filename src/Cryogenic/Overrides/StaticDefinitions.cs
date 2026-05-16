@@ -20,6 +20,7 @@ public partial class Overrides {
     /// various game systems including video playback (HNM), resource loading, audio,
     /// memory management, map rendering, and user interface.
     /// </remarks>
+#pragma warning disable MA0051
     public void DefineStaticDefinitionsFunctions() {
         DefineFunction(cs1, 0x3A, "exit");
         DefineFunction(cs1, 0xB0, "initialize_2_ida");
@@ -154,4 +155,5 @@ public partial class Overrides {
         // Jumped to by self modifying code, needs to be there
         DefineFunction(cs2, 0x1EC9, "split_C000_1EC9_C1EC9");
     }
+#pragma warning restore MA0051
 }
