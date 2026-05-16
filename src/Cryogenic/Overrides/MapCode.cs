@@ -51,6 +51,7 @@ public partial class Overrides {
         DefineFunction(cs1, 0xB6C3, GlobeRotationDispatch_1000_B6C3_01B6C3);
         DefineFunction(cs1, 0xB714, GlobeRotationAltPath_1000_B714_01B714);
         DefineFunction(cs1, 0xB7D2, GlobeBandScanlineCopy_1000_B7D2_01B7D2);
+        DefineFunction(cs1, 0xB427, SavegameMapOverlayExpand_1000_B427_01B427);
     }
 
     /// <summary>
@@ -979,5 +980,120 @@ public partial class Overrides {
         _b7d2Si = si;
         // pop di discards the working di; net DI = entryDI + 0xC8.
         return (ushort)(diIn + 0x00C8);
+    }
+
+    /// <summary>
+    /// Override for cs1:0xB427 — <c>map_func_ida</c> / <c>sub_D2F7</c> (DNCDPRG.ASM:26736),
+    /// the save-game map overlay <b>expander</b> (called from <c>subSaveSavegame</c>).
+    /// Allocates a scratch block via <see cref="AllocCxPagesToDi_1000_F11C_01F11C"/>
+    /// (cs1:0xF11C), then unpacks the 2-bit-packed MAP.HSQ cell stream (far ptr at
+    /// <c>[0xDCFE]</c>) into one byte per cell at <c>ES:0x100</c> using the
+    /// <c>AH=3</c>-seeded MSB shift-register decoder, and appends three fixed data
+    /// blocks (from <c>cs1:0xAA</c>, the entry-DS region <c>0xAA76</c>, and entry-DS
+    /// <c>0</c>). Returns <c>CX=0x567A</c>, <c>DI=0x100</c>, <c>ES</c>=scratch segment.
+    /// Pure compute (the only call, cs1:0xF11C, is now C#) — exact static port.
+    /// </summary>
+    /// <remarks>
+    /// Authoritative source: <c>DNCDPRG.ASM</c> <c>sub_D2F7</c> (lines 26736–26779),
+    /// cross-verified against the cs1 dump bytes 0xB427..0xB473:
+    /// <code>
+    /// B427: B9 78 05      mov cx,0x578
+    /// B42A: E8 EF 3C      call 0xF11C            ; alloc_cx_pages_to_di -> ES:DI
+    /// B42D: BF 00 01      mov di,0x100
+    /// B430: 57 06 1E      push di; push es; push ds
+    /// B433: C5 36 FE DC   lds si,[0xDCFE]        ; DS=[0xDD00], SI=[0xDCFE]
+    /// B437: 33 F6         xor si,si
+    /// B439: B9 FC C5      mov cx,0xC5FC
+    /// B43C: D1 E9 D1 E9   shr cx,1 ; shr cx,1    ; cx = 0x317F (cell count)
+    /// loc_D310 0xB440: B4 03            mov ah,3            ; (loop target — re-seeds AH)
+    /// loc_D312 0xB442: AC               lodsb
+    ///          0xB443: D0 E0 D0 E0      shl al,1 ; shl al,1
+    ///          0xB447: D1 E0 D1 E0      shl ax,1 ; shl ax,1
+    ///          0xB44B: 73 F5            jnb loc_D312        ; while CF==0 keep reading
+    ///          0xB44D: 8A C4 AA         mov al,ah ; stosb   ; emit accumulated AH
+    ///          0xB450: E2 EE            loop loc_D310       ; (-> 0xB440)
+    /// B452: 0E 1F         push cs; pop ds
+    /// B454: BE AA 00 / B9 A2 00 / F3 A4 mov si,0xAA ; mov cx,0xA2  ; rep movsb (cs1:0xAA)
+    /// B45D: 1F            pop ds                 ; DS = entry DS (pushed @B432)
+    /// B45E: BE 76 AA / B9 F8 11 / F3 A4 mov si,0xAA76 ; mov cx,0x11F8 ; rep movsb
+    /// B466: BE 00 00 / B9 61 12 / F3 A4 mov si,0 ; mov cx,0x1261 ; rep movsb
+    /// B46E: 07 5F         pop es; pop di         ; ES=scratch, DI=0x100
+    /// B470: B9 7A 56      mov cx,0x567A
+    /// B473: C3            ret
+    /// </code>
+    /// The first-pass raw decode mis-read <c>E2 EE</c> as <c>loop 0xB442</c>; the
+    /// authoritative ASM confirms <c>loop loc_D310</c> (0xB440), i.e. <c>AH</c> is
+    /// re-seeded to 3 for <b>every</b> output byte and acts as a 6-shift terminator
+    /// counter. The two <c>shl al,1</c> discard the input's top 2 bits; the two
+    /// <c>shl ax,1</c> feed the remaining bits MSB-first through the <c>AH</c> shift
+    /// register, emitting a byte when the seed bit shifts out (CF=1).
+    /// </remarks>
+    public Action SavegameMapOverlayExpand_1000_B427_01B427(int gotoAddress) {
+        ushort entryDs = DS;
+
+        // B427..B42A — inline cs1:0xF11C (alloc_cx_pages_to_di) to obtain ES.
+        const ushort cxPages = 0x0578;
+        ushort scratchSeg;
+        while (true) {
+            ushort e = UInt16[entryDs, 0x39B9];                 // les di,[0x39B7] -> ES=[0x39B9]
+            ushort axp = (ushort)(e + cxPages);                 // mov ax,es ; add ax,cx
+            if (axp < UInt16[entryDs, 0xCE68]) {                 // cmp ax,[0xCE68] ; jnc
+                scratchSeg = e;
+                break;
+            }
+            if (AllocatorFreeSpaceCore()) {                      // call 0xF13F ; (bail -> 0xF130)
+                return NearJump(0xF130);
+            }
+        }
+
+        // B42D..B43E — scratch dst at ES:0x100; MAP.HSQ src via lds [0xDCFE].
+        ushort di = 0x0100;                                      // mov di,0x100 (di pushed/popped -> 0x100)
+        ushort mapSeg = UInt16[entryDs, 0xDD00];                 // lds: DS = [0xDCFE+2]
+        ushort si = 0;                                            // xor si,si
+        int cellCount = 0xC5FC >> 2;                              // 0x317F
+
+        // loc_D310/loc_D312 — AH=3-seeded MSB shift-register cell expander.
+        ushort lastAh = 0x03;
+        for (int n = 0; n < cellCount; n++) {                    // loop loc_D310 (cx=0x317F)
+            ushort ax = 0x0300;                                  // mov ah,3 (AL set by lodsb)
+            while (true) {                                        // loc_D312
+                byte b = UInt8[mapSeg, si]; si = (ushort)(si + 1); // lodsb
+                int al2 = (b << 2) & 0xFF;                        // shl al,1 ; shl al,1
+                ax = (ushort)((ax & 0xFF00) | al2);              // AX = AH:AL
+                ax = (ushort)((ax << 1) & 0xFFFF);               // shl ax,1 (1st)
+                int t2 = ax << 1;                                 // shl ax,1 (2nd)
+                bool cf = (t2 & 0x10000) != 0;
+                ax = (ushort)(t2 & 0xFFFF);
+                if (cf) {                                         // jnb loc_D312 (loop while CF==0)
+                    break;
+                }
+            }
+            lastAh = (ushort)(ax >> 8);                           // mov al,ah
+            UInt8[scratchSeg, di] = (byte)lastAh;                 // stosb
+            di = (ushort)(di + 1);
+        }
+
+        // B452..B46C — append three fixed data blocks after the expanded cells.
+        for (int k = 0; k < 0xA2; k++) {                          // cs1:0xAA, cx=0xA2
+            UInt8[scratchSeg, di] = UInt8[cs1, (ushort)(0x00AA + k)];
+            di = (ushort)(di + 1);
+        }
+        for (int k = 0; k < 0x11F8; k++) {                        // entryDS:0xAA76, cx=0x11F8
+            UInt8[scratchSeg, di] = UInt8[entryDs, (ushort)(0xAA76 + k)];
+            di = (ushort)(di + 1);
+        }
+        for (int k = 0; k < 0x1261; k++) {                        // entryDS:0, cx=0x1261
+            UInt8[scratchSeg, di] = UInt8[entryDs, (ushort)k];
+            di = (ushort)(di + 1);
+        }
+
+        // B46E..B473 — pop es/di (ES=scratch, DI=0x100), cx=0x567A, ret.
+        ES = scratchSeg;
+        DI = 0x0100;
+        DS = entryDs;                                             // pop ds @B45D restored entry DS
+        SI = 0x1261;                                              // SI left after the last rep movsb
+        AX = (ushort)((lastAh << 8) | lastAh);                    // mov al,ah (AH preserved by movsb)
+        CX = 0x567A;
+        return NearRet();
     }
 }

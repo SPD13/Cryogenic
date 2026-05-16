@@ -58,7 +58,7 @@ public partial class Overrides {
         DefineFunction(cs1, 0xAD57, "play_music_MORNING_HSQ_ida");
         DefineFunction(cs1, 0xAE62, "load_music_ida");
         DefineFunction(cs1, 0xB389, "open_sav_cl_ida");
-        DefineFunction(cs1, 0xB427, "map_func_ida");
+        // cs1:0xB427 map_func_ida (sub_D2F7 save-game map overlay) — real C# override in MapCode.cs.
         // cs1:0xB58B/0xB6C3/0xB977/0xBFE3 — real C# overrides in MapCode.cs
         // (ComputePolarOffset / GlobeRotationDispatch / GlobeFarBlit / ComputeFremenSpicePercentages).
         DefineFunction(cs1, 0xC097, "gfx_call_bp_with_front_buffer_as_screen_ida");
