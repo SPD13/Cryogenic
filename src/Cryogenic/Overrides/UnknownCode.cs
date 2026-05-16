@@ -83,6 +83,7 @@ public partial class Overrides {
         DefineFunction(cs1, 0xCC2B, HnmVisibilityPredicate_1000_CC2B_1CC2B);
         DefineFunction(cs1, 0xCC4E, HnmRingAdvanceFar_1000_CC4E_1CC4E);
         DefineFunction(cs1, 0x3DF4, HashInsertOpenAddr_1000_3DF4_13DF4);
+        DefineFunction(cs1, 0x3D83, DoWeirdStackBuffer_1000_3D83_13D83);
         DefineFunction(cs1, 0x01E0, StoreTripletAndPackFlag_1000_01E0_101E0);
         DefineFunction(cs1, 0xB647, WorldToScreenScale_1000_B647_1B647);
         DefineFunction(cs1, 0xD694, SelectDiByWord2582_1000_D694_1D694);
@@ -1572,6 +1573,119 @@ public partial class Overrides {
         }
         UInt8[DS, (ushort)(SI + 0x15)] = c;
         AX = (ushort)((ah << 8) | al);
+        return NearRet();
+    }
+
+    /// <summary>
+    /// cs1:0x3D83 — <c>do_weird_shit_with_stack_buffer_ida</c>. Fills the 0x17-byte
+    /// buffer at <c>[0x47F6]</c> with 0xFF, then either copies a CS-resident length-
+    /// prefixed block (when <c>[0x4774]≠0</c> and <c>[0x4778]≠0</c>) or builds a hash
+    /// table into it via <see cref="HashInsertOpenAddr_1000_3DF4_13DF4"/> driven by the
+    /// bit pattern <c>[0x0012]^[0x0010]</c> and the count <c>[0x476A]</c>; finally
+    /// advances <c>[0x47F6]</c> by <c>[ds:si]-1</c>. Clean leaf (only C# calls).
+    /// </summary>
+    /// <remarks>
+    /// <code>
+    /// 3D83: 1E 07               push ds / pop es
+    /// 3D85: B8 FFFF / B9 0017 / 8B 3E F6 47 / F3 AA   ; memset [0x47F6],0xFF,0x17
+    /// 3D91: 8B 3E F6 47         mov di,[0x47F6]
+    /// 3D95: cmp [0x4774],0 / jz 3DB0
+    /// 3D9C: ax=[0x4778] / or ax,ax / jz 3DB0
+    /// 3DA3: push si / si=ax / cs:lodsb / cl=al / rep cs:movsb / pop si / jmp 3DE5
+    /// 3DB0: dx=[0x0012] ^ [0x0010] ; cl=[si] ; or cl,cl ; jz 3DE5
+    /// 3DBE: ch=[0x00C5]&0x0F ; ax=0xFFFF
+    /// 3DC8: inc ax ; shr dx,1 ; jnc 3DD0 ; call 3DF4 ; 3DD0: or dx,dx ; jnz 3DC8
+    /// 3DD4: dl=[0x476A] ; dec dx ; jle 3DE5
+    /// 3DDB: ax=0x000F ; 3DDE: inc ax ; call 3DF4 ; dec dx ; jnz 3DDE
+    /// 3DE5: lodsb ; xor ah,ah ; di=[0x47F6] ; dec ax ; di+=ax ; [0x47F6]=di ; ret
+    /// </code>
+    /// </remarks>
+    public Action DoWeirdStackBuffer_1000_3D83_13D83(int gotoAddress) {
+        ES = DS;                                       // push ds ; pop es
+        AX = 0xFFFF;
+        ushort di = UInt16[DS, 0x47F6];
+        for (int n = 0; n < 0x17; n++) {               // rep stosb (al=0xFF)
+            UInt8[ES, di] = 0xFF;
+            di = (ushort)(di + 1);
+        }
+        CX = 0;
+        di = UInt16[DS, 0x47F6];                       // mov di,[0x47F6]
+        DI = di;
+        bool to3DB0 = UInt8[DS, 0x4774] == 0;
+        if (!to3DB0) {
+            ushort ax = UInt16[DS, 0x4778];
+            AX = ax;
+            if (ax == 0) {
+                to3DB0 = true;
+            } else {
+                // push si ; si=ax ; cs:lodsb ; cl=al ; rep cs:movsb ; pop si ; jmp 3DE5
+                ushort savedSi = SI;
+                ushort src = ax;
+                byte len = UInt8[cs1, src];
+                src = (ushort)(src + 1);
+                AL = len;
+                ushort cx = len;                       // mov cl,al (ch=0)
+                while (cx != 0) {
+                    UInt8[ES, di] = UInt8[cs1, src];
+                    src = (ushort)(src + 1);
+                    di = (ushort)(di + 1);
+                    cx--;
+                }
+                CX = 0;
+                SI = savedSi;
+                DI = di;
+                return Tail3DE5();
+            }
+        }
+        // 3DB0
+        ushort dx = (ushort)(UInt16[DS, 0x0012] ^ UInt16[DS, 0x0010]);
+        DX = dx;
+        byte cl = UInt8[DS, SI];                        // mov cl,[si]
+        CX = (ushort)((CX & 0xFF00) | cl);
+        if (cl == 0) {                                  // or cl,cl ; jz 3DE5
+            return Tail3DE5();
+        }
+        byte ch = (byte)(UInt8[DS, 0x00C5] & 0x0F);
+        CX = (ushort)((ch << 8) | cl);
+        ushort axw = 0xFFFF;
+        do {
+            axw = (ushort)(axw + 1);                    // inc ax
+            bool cf = (dx & 1) != 0;                    // shr dx,1
+            dx = (ushort)(dx >> 1);
+            DX = dx;
+            if (cf) {                                   // jnc 3DD0 NOT taken → call
+                AX = axw;
+                HashInsertOpenAddr_1000_3DF4_13DF4(0);
+                axw = AX;
+            }
+        } while (dx != 0);                              // or dx,dx ; jnz 3DC8
+        ushort dxc = (ushort)(UInt8[DS, 0x476A] - 1);   // mov dl,[0x476A] (dh=0) ; dec dx
+        DX = dxc;
+        if ((short)dxc > 0) {                            // jle 3DE5 (skip if signed <= 0)
+            ushort ax3 = 0x000F;
+            do {
+                ax3 = (ushort)(ax3 + 1);                // inc ax
+                AX = ax3;
+                HashInsertOpenAddr_1000_3DF4_13DF4(0);
+                dxc = (ushort)(dxc - 1);                // dec dx
+                DX = dxc;
+            } while (dxc != 0);                          // jnz 3DDE
+        }
+        return Tail3DE5();
+    }
+
+    /// <summary>Shared tail of cs1:0x3D83 at 3DE5: <c>lodsb; ax&amp;=0xFF; dec ax;
+    /// [0x47F6]+=ax; ret</c>.</summary>
+    private Action Tail3DE5() {
+        byte al = UInt8[DS, SI];
+        SI = (ushort)(SI + 1);
+        ushort ax = al;                                 // xor ah,ah
+        ushort di = UInt16[DS, 0x47F6];
+        ax = (ushort)(ax - 1);                          // dec ax
+        di = (ushort)(di + ax);
+        UInt16[DS, 0x47F6] = di;
+        DI = di;
+        AX = ax;
         return NearRet();
     }
 

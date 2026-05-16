@@ -24,6 +24,103 @@ public partial class Overrides {
         DefineFunction(cs1, 0xF08E, ClearKeyboardArray_1000_F08E_01F08E);
         DefineFunction(cs1, 0xDB4C, MouseStuff_1000_DB4C_01DB4C);
         DefineFunction(cs1, 0xE9F4, MouseFuncUncalled_1000_E9F4_01E9F4);
+        DefineFunction(cs1, 0xDB67, MouseRedrawGuard_1000_DB67_01DB67);
+        DefineFunction(cs1, 0xDB74, MouseBboxHitTest_1000_DB74_01DB74);
+    }
+
+    /// <summary>
+    /// Override for cs1:0xDB67 — cursor-redraw guard. If <c>[0xDC47] &gt;= 0</c> (signed)
+    /// returns; otherwise increments <c>[0xDC47]</c> and tail-jumps to
+    /// <c>cs1:0xDBEC</c> (<c>draw_mouse_ida</c>).
+    /// </summary>
+    /// <remarks>
+    /// <code>
+    /// DB67: 80 3E 47 DC 00   cmp byte [0xDC47], 0
+    /// DB6C: 79 3D            jns DBAB        ; >=0 -> ret
+    /// DB6E: FE 06 47 DC      inc byte [0xDC47]
+    /// DB72: EB 78            jmp DBEC        ; draw_mouse
+    /// </code>
+    /// </remarks>
+    public Action MouseRedrawGuard_1000_DB67_01DB67(int gotoAddress) {
+        if ((sbyte)UInt8[DS, 0xDC47] >= 0) {
+            return NearRet();
+        }
+        UInt8[DS, 0xDC47] = (byte)(UInt8[DS, 0xDC47] + 1);
+        return NearJump(0xDBEC);
+    }
+
+    /// <summary>
+    /// Override for cs1:0xDB74 — mouse bounding-box hit test. Returns early if
+    /// <c>[0xDC46] &lt; 0</c>. Computes a screen point from <c>[0x2582]</c>/
+    /// <c>[0xDC42]</c>/<c>[0xDC44]</c>; if it falls inside the rect at <c>[si]/[si+2]/
+    /// [si+4]/[si+6]</c> it decrements the redraw counters and dispatches the cursor
+    /// handler via the indirect far pointer at <c>ds:[0x38C5]</c> (§A FarJump pattern;
+    /// continuation is the raw asm <c>pop ax; ret</c> at <c>cs1:0xDBC8</c>).
+    /// </summary>
+    /// <remarks>
+    /// <code>
+    /// DB74: cmp [0xDC46],0 ; js DBAB(ret)
+    /// DB7B: push bx ; push dx
+    /// DB7D: bx=[0x2582] ; dx=[0xDC42] ; dx-=[bx] ; bx=[bx+2] ; neg bx ; bx+=[0xDC44]
+    /// DB90: cmp dx,[si+4] ; jge DBA9      (signed)
+    /// DB95: cmp bx,[si+6] ; jge DBA9
+    /// DB9A: dx+=0x10 ; cmp dx,[si] ; jle DBA9
+    /// DBA1: bx+=0x10 ; cmp bx,[si+2] ; jg DBAC
+    /// DBA9: pop dx ; pop bx ; DBAB: ret
+    /// DBAC: pop dx ; pop bx ; dec [0xDC47] ; push ax ; al=[0xDC46]
+    ///       dec [0xDC46] ; (js DBC0 else inc [0xDC46]) ; or al,al ; js DBC8
+    ///       call far [0x38C5] ; DBC8: pop ax ; ret
+    /// </code>
+    /// </remarks>
+    public Action MouseBboxHitTest_1000_DB74_01DB74(int gotoAddress) {
+        if ((sbyte)UInt8[DS, 0xDC46] < 0) {
+            return NearRet();
+        }
+        ushort savedBx = BX, savedDx = DX;          // push bx ; push dx
+        ushort ptr = UInt16[DS, 0x2582];
+        short dx = (short)(UInt16[DS, 0xDC42] - UInt16[DS, ptr]);   // dx=[0xDC42]; dx-=[bx]
+        short bx = (short)(0 - UInt16[DS, (ushort)(ptr + 2)]);      // bx=[bx+2]; neg bx
+        bx = (short)(bx + UInt16[DS, 0xDC44]);                       // bx+=[0xDC44]
+        bool inside;
+        if ((short)dx >= (short)UInt16[DS, (ushort)(SI + 4)]) {
+            inside = false;
+        } else if ((short)bx >= (short)UInt16[DS, (ushort)(SI + 6)]) {
+            inside = false;
+        } else {
+            dx = (short)(dx + 0x10);
+            if ((short)dx <= (short)UInt16[DS, SI]) {
+                inside = false;
+            } else {
+                bx = (short)(bx + 0x10);
+                inside = (short)bx > (short)UInt16[DS, (ushort)(SI + 2)];   // jg DBAC
+            }
+        }
+        BX = savedBx;                                // pop dx ; pop bx (both exits)
+        DX = savedDx;
+        if (!inside) {
+            return NearRet();                        // DBA9 -> DBAB ret
+        }
+        // DBAC
+        UInt8[DS, 0xDC47] = (byte)(UInt8[DS, 0xDC47] - 1);          // dec [0xDC47]
+        SP = (ushort)(SP - 2);                       // push ax (asm @0xDBC8 pops it)
+        UInt16[SS, SP] = AX;
+        byte al = UInt8[DS, 0xDC46];                 // mov al,[0xDC46] (original)
+        byte decd = (byte)(UInt8[DS, 0xDC46] - 1);
+        UInt8[DS, 0xDC46] = decd;                    // dec [0xDC46]
+        if ((sbyte)decd >= 0) {                       // js DBC0 NOT taken -> inc (restore)
+            UInt8[DS, 0xDC46] = (byte)(decd + 1);
+        }
+        if ((sbyte)al < 0) {                          // or al,al ; js DBC8 (skip call)
+            return NearJump(0xDBC8);                  // raw asm: pop ax ; ret
+        }
+        // call far [0x38C5] — §A indirect-far pattern
+        ushort off = UInt16[DS, 0x38C5];
+        ushort seg = UInt16[DS, 0x38C7];
+        SP = (ushort)(SP - 2);
+        UInt16[SS, SP] = cs1;                         // push CS
+        SP = (ushort)(SP - 2);
+        UInt16[SS, SP] = 0xDBC8;                      // push continuation IP (asm pop ax;ret)
+        return FarJump(seg, off);
     }
 
     /// <summary>
