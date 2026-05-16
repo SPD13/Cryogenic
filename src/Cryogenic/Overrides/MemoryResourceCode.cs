@@ -16,6 +16,8 @@ public partial class Overrides {
         DefineFunction(cs1, 0xE56B, ParseCmdIsEndOfArg_1000_E56B_01E56B);
         DefineFunction(cs1, 0xF2FC, StrcpyToFilenameBuf_1000_F2FC_01F2FC);
         DefineFunction(cs1, 0xF0FF, BumpAllocate_1000_F0FF_01F0FF);
+        DefineFunction(cs1, 0xF11C, AllocCxPagesToDi_1000_F11C_01F11C);
+        DefineFunction(cs1, 0xF13F, AllocatorAttemptToFreeSpace_1000_F13F_01F13F);
     }
 
     /// <summary>
@@ -157,5 +159,169 @@ public partial class Overrides {
             return NearJump(0xF131);
         }
         return NearRet();
+    }
+
+    /// <summary>
+    /// Override for cs1:0xF11C — <c>alloc_cx_pages_to_di_ida</c>. Returns the current
+    /// allocation block as <c>ES:DI</c> from the far pointer at <c>ds[0x39B7]</c>; if the
+    /// requested end (<c>ES + CX</c> paragraphs) would exceed the heap limit at
+    /// <c>ds[0xCE68]</c>, it calls the compacting reclaimer
+    /// <see cref="AllocatorAttemptToFreeSpace_1000_F13F_01F13F"/> (cs1:0xF13F) and retries.
+    /// </summary>
+    /// <remarks>
+    /// Asm (cs1:0xF11C..0xF12F):
+    /// <code>
+    /// F11C: C4 3E B7 39   les di,[0x39B7]      ; DI=[0x39B7], ES=[0x39B9] (bump seg)
+    /// F120: 8C C0         mov ax,es
+    /// F122: 03 C1         add ax,cx
+    /// F124: 3B 06 68 CE   cmp ax,[0xCE68]
+    /// F128: 73 01         jnc F12B             ; ax>=limit -> reclaim
+    /// F12A: C3            ret                  ; enough room (ES:DI = block)
+    /// F12B: E8 11 00      call F13F            ; attempt_to_free_space
+    /// F12E: EB EC         jmp F11C             ; retry
+    /// </code>
+    /// The <c>les</c> aliases the bump segment word at <c>0x39B9</c> (<c>0x39B7+2</c>),
+    /// so each retry re-reads the (possibly lowered) bump pointer that <c>cs1:0xF13F</c>
+    /// just rewrote. If <c>cs1:0xF13F</c> finds nothing to reclaim it tail-transfers to
+    /// the fatal error path at <c>cs1:0xF130</c> and never returns here.
+    /// </remarks>
+    public System.Action AllocCxPagesToDi_1000_F11C_01F11C(int gotoAddress) {
+        while (true) {
+            ushort di = UInt16[DS, 0x39B7];                 // les di,[0x39B7]
+            ushort es = UInt16[DS, 0x39B9];                 //   ES = [0x39B7+2] = [0x39B9]
+            DI = di;
+            ES = es;
+            ushort ax = (ushort)(es + CX);                  // mov ax,es ; add ax,cx
+            AX = ax;
+            if (ax < UInt16[DS, 0xCE68]) {                  // cmp ax,[0xCE68] ; jnc (CF=>ax<lim->ret)
+                return NearRet();
+            }
+            // call F13F ; jmp F11C (retry)
+            if (AllocatorFreeSpaceCore()) {
+                // F13F bailed to the fatal error path at cs1:0xF130 (raw asm).
+                return NearJump(0xF130);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Override for cs1:0xF13F — <c>allocator_attempt_to_free_space_ida</c>: the resource
+    /// heap's compacting reclaimer. Scans the 145-entry resource descriptor tables, frees
+    /// the entry with the largest gap below the heap top, slides every higher allocation
+    /// down to close the gap (segment-chunked <c>rep movsw</c>), fixes up all resource
+    /// segment pointers, and lowers the bump pointer at <c>[0x39B9]</c>. Pure compute +
+    /// memory moves — no INT / disk / driver / indirect dependencies.
+    /// </summary>
+    /// <remarks>
+    /// Asm (cs1:0xF13F..0xF1FA, 188 B) — see the inline step comments below. The
+    /// <c>loop</c> at <c>0xF1A1</c> targets <c>0xF193</c> (not <c>0xF190</c>), so the
+    /// <c>0x8000</c> sentinel in <c>BX</c> is initialised once before the find-min loop.
+    /// On "nothing reclaimable" (<c>BX==0</c> after the first scan) it tail-transfers to
+    /// the fatal error path at <c>cs1:0xF130</c> (raw asm, non-returning).
+    /// </remarks>
+    public System.Action AllocatorAttemptToFreeSpace_1000_F13F_01F13F(int gotoAddress) {
+        if (AllocatorFreeSpaceCore()) {
+            return NearJump(0xF130);
+        }
+        return NearRet();
+    }
+
+    /// <summary>
+    /// Byte-faithful core of cs1:0xF13F. Returns <c>true</c> when the asm would
+    /// <c>jz F130</c> (no reclaimable resource → fatal error tail-transfer); <c>false</c>
+    /// on a normal <c>ret</c> (heap compacted, bump pointer lowered, or topmost block
+    /// simply dropped). All effects are applied directly to emulated memory.
+    /// </summary>
+    private bool AllocatorFreeSpaceCore() {
+        // F140..F16A — scan tables for the valid entry maximising (bp - [di]).
+        ushort bp = UInt16[DS, 0x0002];                     // mov bp,[0x0002]
+        ushort si = 0xD844;                                 // mov si,0xD844
+        ushort di = 0xDA8C;                                 // mov di,0xDA8C
+        ushort dx = 0;                                       // xor dx,dx
+        ushort bx = 0;                                       // mov bx,dx
+        for (int n = 0x0091; n != 0; n--) {                 // mov cx,0x91 ; loop F151
+            di = (ushort)(di + 2);                           // add di,2
+            si = (ushort)(si + 4);                           // add si,4
+            ushort ax = UInt16[DS, (ushort)(si + 2)];        // mov ax,[si+2]
+            if (ax == 0) {                                    // or ax,ax ; jz F16A
+                continue;
+            }
+            ax = (ushort)(bp - UInt16[DS, di]);              // mov ax,bp ; sub ax,[di]
+            if (ax < dx) {                                    // cmp ax,dx ; jc F16A
+                continue;
+            }
+            dx = ax;                                          // mov dx,ax
+            bx = si;                                          // mov bx,si
+        }
+
+        if (bx == 0) {                                        // or bx,bx ; jz F130
+            return true;                                       // fatal error tail-transfer
+        }
+
+        // F170..F184 — invalidate the cached "current resource" index if it is the victim.
+        ushort idx = (ushort)(((ushort)(bx - 0xD844)) >> 2); // sub ax,0xD844 ; shr ax,1 (x2)
+        if (idx == UInt16[DS, 0x2784]) {                      // cmp ax,[0x2784] ; jnz F185
+            UInt16[DS, 0x2784] = 0xFFFF;                       // mov word [0x2784],0xFFFF
+        }
+
+        // F185..F189 — take the victim's segment into DX, clear its descriptor slot.
+        dx = UInt16[DS, (ushort)(bx + 2)];                    // xor dx,dx ; xchg dx,[bx+2]
+        UInt16[DS, (ushort)(bx + 2)] = 0;
+
+        // F18A..F1A5 — find the smallest segment strictly above the freed block.
+        si = 0xD84A;                                          // mov si,0xD84A
+        bx = 0x8000;                                           // mov bx,0x8000  (sentinel, set once)
+        for (int n = 0x0091; n != 0; n--) {                   // mov cx,0x91 ; loop F193
+            ushort val = UInt16[DS, si];                        // lodsw
+            si = (ushort)(si + 4);                             //   si+=2 ; add si,2 (stride 4)
+            ushort ax = (ushort)(val - dx);                    // sub ax,dx
+            if (val < dx) {                                    // jc F1A1 (unsigned borrow)
+                continue;
+            }
+            if (ax >= bx) {                                    // cmp ax,bx ; jnc F1A1
+                continue;
+            }
+            bx = ax;                                           // mov bx,ax
+        }
+
+        if ((short)bx < 0) {                                   // or bx,bx ; js F1F5
+            UInt16[DS, 0x39B9] = dx;                            // F1F5: mov [0x39B9],dx ; ret
+            return false;
+        }
+
+        // F1A7..0xF1BF — slide every resource segment pointer >= dx down by bx.
+        si = 0xD846;                                           // mov si,0xD846
+        for (int n = 0x0091; n != 0; n--) {                    // mov cx,0x91 ; loop F1AD
+            si = (ushort)(si + 4);                              // add si,4
+            if (UInt16[DS, si] < dx) {                          // cmp [si],dx ; jc F1B6
+                continue;
+            }
+            UInt16[DS, si] = (ushort)(UInt16[DS, si] - bx);     // sub [si],bx
+        }
+        if (UInt16[DS, 0xDBB2] >= dx) {                         // mov si,0xDBB2 ; cmp [si],dx ; jc F1C1
+            UInt16[DS, 0xDBB2] = (ushort)(UInt16[DS, 0xDBB2] - bx); // sub [si],bx
+        }
+
+        // F1C1..0xF1F4 — slide the heap contents down, segment-chunked.
+        while (true) {
+            ushort esSeg = dx;                                  // mov es,dx
+            dx = (ushort)(dx + bx);                             // add dx,bx
+            ushort dsSeg = dx;                                  // mov ds,dx
+            ushort ax = (ushort)(UInt16[SS, 0x39B9] - dx);      // ss: mov ax,[0x39B9] ; sub ax,dx
+            if (ax <= 0x1000) {                                 // cmp ax,0x1000 ; jbe F1E3
+                int words = ax << 3;                             // mov cx,ax ; shl cx,1 (x3)
+                for (int k = 0; k < words; k++) {               // rep movsw
+                    UInt16[esSeg, (ushort)(k * 2)] = UInt16[dsSeg, (ushort)(k * 2)];
+                }
+                // push ss ; pop ds — DS = SS (the C# DS/SS props already alias the data seg)
+                UInt16[DS, 0x39B9] = (ushort)(UInt16[DS, 0x39B9] - bx); // sub [0x39B9],bx
+                return false;                                   // pop cx ; ret
+            }
+            for (int k = 0; k < 0x8000; k++) {                  // mov cx,0x8000 ; rep movsw
+                UInt16[esSeg, (ushort)(k * 2)] = UInt16[dsSeg, (ushort)(k * 2)];
+            }
+            dx = (ushort)(esSeg + 0x1000);                      // mov dx,es ; add dx,0x1000
+            // jmp F1C1
+        }
     }
 }
