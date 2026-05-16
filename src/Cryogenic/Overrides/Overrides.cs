@@ -161,6 +161,7 @@ public partial class Overrides : CSharpOverrideHelper {
 		DefineAudioCodeOverrides();
 		DefineMemoryResourceCodeOverrides();
 		DefineIndirectFarCodeOverrides();
+		DefineGraphicsCompositionCodeOverrides();   // Phase 37
 
 		DefineDriversRemapping();
 		DetectDriversEntryPoints();
