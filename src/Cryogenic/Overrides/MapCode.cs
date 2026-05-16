@@ -49,6 +49,8 @@ public partial class Overrides {
         DefineFunction(cs1, 0xBFE3, ComputeFremenSpicePercentages_1000_BFE3_01BFE3);
         DefineFunction(cs1, 0xB977, GlobeFarBlit_1000_B977_01B977);
         DefineFunction(cs1, 0xB6C3, GlobeRotationDispatch_1000_B6C3_01B6C3);
+        DefineFunction(cs1, 0xB714, GlobeRotationAltPath_1000_B714_01B714);
+        DefineFunction(cs1, 0xB7D2, GlobeBandScanlineCopy_1000_B7D2_01B7D2);
     }
 
     /// <summary>
@@ -90,14 +92,15 @@ public partial class Overrides {
     /// Two paths:
     /// <list type="bullet">
     /// <item><description>Bit 7 of <c>[0x46EB]</c> set: clamps the globe-rotation angle at <c>[0x197E]</c> to [-0x4B, +0x4B], then indirect-far-calls through <c>[0x3929]</c> with the globe-render state pre-staged.</description></item>
-    /// <item><description>Bit 7 clear: tail-jumps to <c>cs1:0xB714</c> (asm-side alternative-path body, ~32+ bytes; not yet ported).</description></item>
+    /// <item><description>Bit 7 clear: delegates to the bit-7-clear alternative path at
+    /// <c>cs1:0xB714</c> — now fully ported (see <see cref="GlobeRotationAltPath_1000_B714_01B714"/>).</description></item>
     /// </list>
     /// </remarks>
     public Action GlobeRotationDispatch_1000_B6C3_01B6C3(int gotoAddress) {
         byte flag = UInt8[DS, 0x46EB];
         if ((flag & 0x80) == 0) {
-            // jz B714 — alternative path, asm
-            return NearJump(0xB714);
+            // jz B714 — bit-7-clear alternative path (now ported to C#)
+            return GlobeRotationAltPath_1000_B714_01B714(gotoAddress);
         }
         // push ds; pop es — ES = DS via the stack write the asm performs
         ushort savedDs = DS;
@@ -636,5 +639,345 @@ public partial class Overrides {
         uint destinationAddress = MemoryUtils.ToPhysicalAddress(DS, DI);
         Memory.MemCopy(sourceAddress, destinationAddress, 4 * 2);
         return NearRet();
+    }
+
+    /// <summary>
+    /// Override for cs1:0xB714 — the bit-7-clear branch of <see cref="GlobeRotationDispatch_1000_B6C3_01B6C3"/>
+    /// (Phase 33 globe rotation). Completes the previously-partial dispatch: computes the
+    /// viewport-derived globe-render parameters into <c>[0xDCF2..0xDCF8]</c>, clamps the
+    /// rotation angle at <c>[0x197E]</c>, walks the TABLAT band table at <c>0x4948</c> (either
+    /// downward for a negative band or upward for a positive band, with the engine's
+    /// zero-<c>mapRowStart</c> direction-flip), assembling each band's pixel run into the
+    /// globe scratch buffer via <see cref="GlobeBandScanlineCopyCore"/> (cs1:0xB7D2), then
+    /// indirect-far-dispatches the assembled frame through <c>[0x390D]</c> (unless
+    /// <c>[0x46EB] &amp; 0x40</c> is set, in which case the blit is skipped).
+    /// </summary>
+    /// <remarks>
+    /// Asm (cs1:0xB714..0xB7D1):
+    /// <code>
+    /// B714: BF 60 4C            mov di,0x4C60
+    /// B717: A1 E7 46            mov ax,[0x46E7]
+    /// B71A: 2B 06 E3 46         sub ax,[0x46E3]
+    /// B71E: 8B D0               mov dx,ax
+    /// B720: D1 EA               shr dx,1
+    /// B722: 03 16 E3 46         add dx,[0x46E3]
+    /// B726: 89 16 F6 DC         mov [0xDCF6],dx
+    /// B72A: A3 F2 DC            mov [0xDCF2],ax
+    /// B72D: A1 E9 46            mov ax,[0x46E9]
+    /// B730: 2B 06 E5 46         sub ax,[0x46E5]
+    /// B734: 48                  dec ax
+    /// B735: 8B D8               mov bx,ax
+    /// B737: D1 EB               shr bx,1
+    /// B739: 03 1E E5 46         add bx,[0x46E5]
+    /// B73D: 89 1E F8 DC         mov [0xDCF8],bx
+    /// B741: 40                  inc ax
+    /// B742: A3 F4 DC            mov [0xDCF4],ax
+    /// B745: 48                  dec ax
+    /// B746: D1 E8               shr ax,1
+    /// B748: 8B C8               mov cx,ax
+    /// B74A: BB 56 00            mov bx,0x0056
+    /// B74D: 2B D8               sub bx,ax
+    /// B74F: A1 7E 19            mov ax,[0x197E]
+    /// B752: 0B C0               or  ax,ax
+    /// B754: 8B D0               mov dx,ax
+    /// B756: 79 02               jns B75A
+    /// B758: F7 D8               neg ax
+    /// B75A: 3B C3               cmp ax,bx
+    /// B75C: 72 0B               jc  B769
+    /// B75E: 8B C3               mov ax,bx
+    /// B760: 0B D2               or  dx,dx
+    /// B762: 79 02               jns B766
+    /// B764: F7 D8               neg ax
+    /// B766: A3 7E 19            mov [0x197E],ax
+    /// B769: BD 48 49            mov bp,0x4948
+    /// B76C: 8B 16 7C 19         mov dx,[0x197C]
+    /// B770: A1 7E 19            mov ax,[0x197E]
+    /// B773: 2B C1               sub ax,cx
+    /// B775: 50                  push ax
+    /// B776: 8B 0E F4 DC         mov cx,[0xDCF4]
+    /// B77A: D1 E0 D1 E0 D1 E0   shl ax,1 (x3)            ; ax <<= 3
+    /// B780: 79 1A               jns B79C                 ; positive band
+    /// B782: F7 D8               neg ax
+    /// B784: 03 E8               add bp,ax
+    /// B786: 51                  push cx                  ; --- negative loop
+    /// B787: 8B 4E 00            mov cx,[bp+0]
+    /// B78A: 8B 5E 02            mov bx,[bp+2]
+    /// B78D: F7 D9               neg cx
+    /// B78F: 74 14               jz  B7A5                 ; zero mapRowStart -> flip to fwd
+    /// B791: E8 3E 00            call B7D2
+    /// B794: 83 ED 08            sub bp,8
+    /// B797: 59                  pop cx
+    /// B798: E2 EC               loop B786
+    /// B79A: EB 12               jmp B7AE
+    /// B79C: 03 E8               add bp,ax                ; --- positive band
+    /// B79E: 51                  push cx                  ; --- forward loop
+    /// B79F: 8B 4E 00            mov cx,[bp+0]
+    /// B7A2: 8B 5E 02            mov bx,[bp+2]
+    /// B7A5: E8 2A 00            call B7D2
+    /// B7A8: 83 C5 08            add bp,8
+    /// B7AB: 59                  pop cx
+    /// B7AC: E2 F0               loop B79E
+    /// B7AE: 8E 06 DA DB         mov es,[0xDBDA]
+    /// B7B2: 8B 3E F2 DC         mov di,[0xDCF2]
+    /// B7B6: 8B 0E F4 DC         mov cx,[0xDCF4]
+    /// B7BA: 8B 16 E3 46         mov dx,[0x46E3]
+    /// B7BE: 8B 1E E5 46         mov bx,[0x46E5]
+    /// B7C2: BE 60 4C            mov si,0x4C60
+    /// B7C5: 58                  pop ax
+    /// B7C6: F6 06 EB 46 40      test byte [0x46EB],0x40
+    /// B7CB: 75 04               jnz B7D1
+    /// B7CD: FF 1E 0D 39         call far [0x390D]
+    /// B7D1: C3                  ret
+    /// </code>
+    /// The <c>loop</c>s decrement the <c>[0xDCF4]</c>-derived band count saved across the
+    /// <c>call B7D2</c> by the surrounding <c>push cx</c>/<c>pop cx</c>. <c>jz B7A5</c> jumps
+    /// from the negative-band loop into the forward loop's call site, so a zero
+    /// <c>mapRowStart</c> permanently flips the remaining iterations to the forward
+    /// (<c>+8</c>) walk — replicated here via <c>forward</c>. Ambient CLD assumed.
+    /// </remarks>
+    public Action GlobeRotationAltPath_1000_B714_01B714(int gotoAddress) {
+        // B714..B748 — derive globe-render parameters from the viewport rectangle.
+        ushort ax = (ushort)(UInt16[DS, 0x46E7] - UInt16[DS, 0x46E3]);
+        ushort dx = (ushort)(ax >> 1);
+        dx = (ushort)(dx + UInt16[DS, 0x46E3]);
+        UInt16[DS, 0xDCF6] = dx;
+        UInt16[DS, 0xDCF2] = ax;
+
+        ax = (ushort)(UInt16[DS, 0x46E9] - UInt16[DS, 0x46E5]);
+        ax = (ushort)(ax - 1);                              // dec ax
+        ushort bx = (ushort)(ax >> 1);
+        bx = (ushort)(bx + UInt16[DS, 0x46E5]);
+        UInt16[DS, 0xDCF8] = bx;
+        ax = (ushort)(ax + 1);                              // inc ax
+        UInt16[DS, 0xDCF4] = ax;
+        ax = (ushort)(ax - 1);                              // dec ax
+        ax = (ushort)(ax >> 1);
+        ushort cx = ax;                                     // mov cx,ax
+
+        // B74A..B766 — clamp the rotation angle at [0x197E] to [-(0x56-cx), +(0x56-cx)].
+        bx = (ushort)(0x0056 - ax);                         // mov bx,0x56 ; sub bx,ax
+        ax = UInt16[DS, 0x197E];
+        dx = ax;                                            // mov dx,ax (sign keeper)
+        if ((short)ax < 0) {                                // jns +2 : abs
+            ax = (ushort)(-(short)ax);                      // neg ax
+        }
+        if (ax >= bx) {                                     // jc B769 (CF set => ax<bx => skip)
+            ax = bx;                                        // clamp
+            if ((short)dx < 0) {                            // or dx,dx ; jns +2
+                ax = (ushort)(-(short)ax);                  // neg ax (restore sign)
+            }
+            UInt16[DS, 0x197E] = ax;
+        }
+
+        // B769..B77E — TABLAT base, band selector.
+        ushort bp = 0x4948;
+        dx = UInt16[DS, 0x197C];
+        ax = UInt16[DS, 0x197E];
+        ax = (ushort)(ax - cx);                             // sub ax,cx
+        ushort savedAx = ax;                                // push ax (restored at B7C5)
+        ushort loopCx = UInt16[DS, 0xDCF4];                 // mov cx,[0xDCF4]
+        ax = (ushort)(ax << 3);                             // shl ax,1 (x3)
+
+        bool forward;
+        if ((short)ax >= 0) {                               // jns B79C — positive band
+            bp = (ushort)(bp + ax);                         // B79C: add bp,ax
+            forward = true;
+        } else {                                            // B782 — negative band
+            ax = (ushort)(-(short)ax);                      // neg ax
+            bp = (ushort)(bp + ax);                         // add bp,ax
+            forward = false;
+        }
+
+        // B786 / B79E — band-table walk. dx is preserved across B7D2 (the helper
+        // restores it); di accumulates +0xC8 per band; the loop counter lives in loopCx.
+        ushort di = 0x4C60;                                 // B714: mov di,0x4C60
+        while (loopCx != 0) {
+            ushort bandStart = UInt16[SS, (ushort)(bp + 0)]; // mov cx,[bp+0]
+            ushort bandLen = UInt16[SS, (ushort)(bp + 2)];   // mov bx,[bp+2]
+            if (!forward) {
+                bandStart = (ushort)(-(short)bandStart);     // neg cx
+                if (bandStart == 0) {                        // jz B7A5 — flip to forward
+                    di = GlobeBandScanlineCopyCore(bandStart, bandLen, dx, bp, di);
+                    bp = (ushort)(bp + 8);                   // B7A8: add bp,8
+                    loopCx = (ushort)(loopCx - 1);           // pop cx ; loop B79E
+                    forward = true;
+                    continue;
+                }
+                di = GlobeBandScanlineCopyCore(bandStart, bandLen, dx, bp, di);
+                bp = (ushort)(bp - 8);                       // B794: sub bp,8
+                loopCx = (ushort)(loopCx - 1);               // pop cx ; loop B786
+            } else {
+                di = GlobeBandScanlineCopyCore(bandStart, bandLen, dx, bp, di);
+                bp = (ushort)(bp + 8);                       // B7A8: add bp,8
+                loopCx = (ushort)(loopCx - 1);               // pop cx ; loop B79E
+            }
+        }
+
+        // B7AE..B7D1 — stage blit registers and dispatch.
+        ES = UInt16[DS, 0xDBDA];
+        DI = UInt16[DS, 0xDCF2];
+        CX = UInt16[DS, 0xDCF4];
+        DX = UInt16[DS, 0x46E3];
+        BX = UInt16[DS, 0x46E5];
+        SI = 0x4C60;
+        AX = savedAx;                                       // pop ax
+        BP = bp;
+        if ((UInt8[DS, 0x46EB] & 0x40) != 0) {              // jnz B7D1 — skip blit
+            return NearRet();
+        }
+        // B7CD: call far [0x390D] (DS-relative); continuation = the raw-asm ret @0xB7D1.
+        ushort targetOff = UInt16[DS, 0x390D];
+        ushort targetSeg = UInt16[DS, 0x390F];
+        SP = (ushort)(SP - 2);
+        UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2);
+        UInt16[SS, SP] = 0xB7D1;
+        return FarJump(targetSeg, targetOff);
+    }
+
+    /// <summary>
+    /// Override for cs1:0xB7D2 — per-band globe scanline assembler. Reloads DS:SI from the
+    /// MAP.HSQ far pointer at <c>[0xDCFE]</c>, stores the rotation product's high word into
+    /// the band record's <c>fp</c> field (<c>[bp+6]</c>), then copies the band's centred
+    /// pixel run from the map buffer into the globe scratch buffer (<c>ES=SS</c>) via two
+    /// <c>rep movsb</c> phases. DS/DI/DX are restored on exit; DI is advanced by 200
+    /// (one globe raster row). Pure compute — no driver/disk/INT/indirect dependencies.
+    /// </summary>
+    /// <remarks>
+    /// Asm (cs1:0xB7D2..0xB826):
+    /// <code>
+    /// B7D2: 52 57 1E            push dx; push di; push ds
+    /// B7D5: C5 36 FE DC         lds si,[0xDCFE]
+    /// B7D9: 16 07               push ss; pop es          ; es = ss
+    /// B7DB: 03 F1               add si,cx
+    /// B7DD: 03 DB               add bx,bx
+    /// B7DF: 8B C2 F7 E3         mov ax,dx ; mul bx        ; dx:ax = dx*bx
+    /// B7E3: 89 56 06            mov [bp+6],dx
+    /// B7E6: 8B C2               mov ax,dx
+    /// B7E8: 36 8B 16 F2 DC      ss: mov dx,[0xDCF2]
+    /// B7ED: 3B DA               cmp bx,dx
+    /// B7EF: 73 0A               jnc B7FB
+    /// B7F1: 8B CA 2B CB         mov cx,dx ; sub cx,bx
+    /// B7F5: D1 E9               shr cx,1
+    /// B7F7: 03 F9               add di,cx
+    /// B7F9: 8B D3               mov dx,bx
+    /// B7FB: 8B CA               mov cx,dx
+    /// B7FD: D1 E9               shr cx,1
+    /// B7FF: 2B C1               sub ax,cx
+    /// B801: 79 02               jns B805
+    /// B803: 03 C3               add ax,bx
+    /// B805: 8B CA               mov cx,dx
+    /// B807: 2B D8               sub bx,ax
+    /// B809: 2B CB               sub cx,bx
+    /// B80B: 79 06               jns B813
+    /// B80D: 03 CB 03 F0 EB 0A   add cx,bx ; add si,ax ; jmp B81D
+    /// B813: 87 D9               xchg bx,cx
+    /// B815: 56 03 F0            push si ; add si,ax
+    /// B818: F3 A4               rep movsb
+    /// B81A: 5E 87 D9            pop si ; xchg bx,cx
+    /// B81D: F3 A4               rep movsb
+    /// B81F: 1F 5F 5A            pop ds ; pop di ; pop dx
+    /// B822: 81 C7 C8 00         add di,0x00C8
+    /// B826: C3                  ret
+    /// </code>
+    /// The post-<c>cmp bx,dx</c> <c>jnc</c> tests CF (bx&lt;dx unsigned). The two
+    /// <c>jns</c> branches test SF (signed non-negative). The <c>xchg bx,cx</c> pair around
+    /// the first <c>rep movsb</c> swaps the run lengths so the two phases copy
+    /// <c>bx'</c> bytes from <c>si+ax</c> then <c>cx'</c> bytes from the un-offset <c>si</c>.
+    /// <c>rep</c> leaves CX=0. Ambient CLD assumed. The final DI is always
+    /// <c>entryDI + 200</c> (the working DI used for the writes is discarded by <c>pop di</c>).
+    /// </remarks>
+    public Action GlobeBandScanlineCopy_1000_B7D2_01B7D2(int gotoAddress) {
+        ushort entryDs = DS;
+        ushort entryDx = DX;
+        ushort entryDi = DI;
+        ushort newDi = GlobeBandScanlineCopyCore(CX, BX, DX, BP, DI);
+        // pop ds ; pop di ; pop dx  (restore), then add di,0xC8 (folded into newDi).
+        DS = entryDs;
+        DX = entryDx;
+        _ = entryDi;
+        DI = newDi;
+        CX = 0;                                             // rep exhausts cx
+        ES = SS;                                            // push ss; pop es
+        AX = _b7d2Ax;
+        BX = _b7d2Bx;
+        SI = _b7d2Si;
+        return NearRet();
+    }
+
+    private ushort _b7d2Ax;
+    private ushort _b7d2Bx;
+    private ushort _b7d2Si;
+
+    /// <summary>
+    /// Byte-faithful core of cs1:0xB7D2 (see <see cref="GlobeBandScanlineCopy_1000_B7D2_01B7D2"/>).
+    /// Performs the band record write and the two <c>rep movsb</c> phases against the live
+    /// emulated memory using the supplied register snapshot, and returns the function's net
+    /// DI (<c>entryDI + 200</c>). The working AX/BX/SI the asm leaves in registers are
+    /// stashed in <see cref="_b7d2Ax"/>/<see cref="_b7d2Bx"/>/<see cref="_b7d2Si"/> for the
+    /// registered-entry override; the band-walk caller ignores them (it re-derives CX/BX
+    /// from the next TABLAT record).
+    /// </summary>
+    private ushort GlobeBandScanlineCopyCore(ushort cxIn, ushort bxIn, ushort dxIn, ushort bp, ushort diIn) {
+        SegmentedAddress p = globalsOnDs.GetPtr1138_DCFE_Dword32();  // lds si,[0xDCFE]
+        ushort mapSeg = p.Segment;
+        ushort si = (ushort)(p.Offset + cxIn);              // add si,cx
+        ushort es = SS;                                     // push ss; pop es
+        ushort bx = (ushort)(bxIn + bxIn);                  // add bx,bx
+        uint product = (uint)dxIn * (uint)bx;               // mov ax,dx ; mul bx
+        ushort dx = (ushort)(product >> 16);                // dx = high word
+        UInt16[SS, (ushort)(bp + 6)] = dx;                  // mov [bp+6],dx (SS default seg)
+        ushort ax = dx;                                     // mov ax,dx
+        dx = UInt16[SS, 0xDCF2];                            // ss: mov dx,[0xDCF2]
+        ushort di = diIn;
+        if (bx < dx) {                                      // cmp bx,dx ; jnc B7FB (CF => bx<dx)
+            ushort c = (ushort)(dx - bx);                   // mov cx,dx ; sub cx,bx
+            c = (ushort)(c >> 1);                           // shr cx,1
+            di = (ushort)(di + c);                          // add di,cx
+            dx = bx;                                        // mov dx,bx
+        }
+        ushort cx = (ushort)(dx >> 1);                      // mov cx,dx ; shr cx,1
+        ax = (ushort)(ax - cx);                             // sub ax,cx
+        if ((short)ax < 0) {                                // jns B805
+            ax = (ushort)(ax + bx);                         // add ax,bx
+        }
+        cx = dx;                                            // mov cx,dx
+        bx = (ushort)(bx - ax);                             // sub bx,ax
+        cx = (ushort)(cx - bx);                             // sub cx,bx
+        if ((short)cx < 0) {                                // jns B813 (SF set => B80D)
+            cx = (ushort)(cx + bx);                         // add cx,bx
+            si = (ushort)(si + ax);                         // add si,ax
+            for (int k = 0; k < cx; k++) {                  // rep movsb @B81D
+                UInt8[es, di] = UInt8[mapSeg, si];
+                si = (ushort)(si + 1);
+                di = (ushort)(di + 1);
+            }
+            cx = 0;
+        } else {                                            // B813
+            ushort phase1 = cx;                             // xchg bx,cx -> rep count = old BX
+            (bx, cx) = (cx, bx);                            // xchg bx,cx
+            ushort siSave = si;                             // push si
+            si = (ushort)(si + ax);                         // add si,ax
+            for (int k = 0; k < cx; k++) {                  // rep movsb @B818 (count = oldBX)
+                UInt8[es, di] = UInt8[mapSeg, si];
+                si = (ushort)(si + 1);
+                di = (ushort)(di + 1);
+            }
+            cx = 0;                                         // rep exhausts cx
+            si = siSave;                                    // pop si
+            (bx, cx) = (cx, bx);                            // xchg bx,cx -> cx = old CX
+            for (int k = 0; k < cx; k++) {                  // rep movsb @B81D (count = oldCX)
+                UInt8[es, di] = UInt8[mapSeg, si];
+                si = (ushort)(si + 1);
+                di = (ushort)(di + 1);
+            }
+            cx = 0;
+            _ = phase1;
+        }
+        _b7d2Ax = ax;
+        _b7d2Bx = bx;
+        _b7d2Si = si;
+        // pop di discards the working di; net DI = entryDI + 0xC8.
+        return (ushort)(diIn + 0x00C8);
     }
 }
