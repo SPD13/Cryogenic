@@ -36,7 +36,104 @@ public partial class Overrides {
         DefineFunction(cs1, 0xEC46, CallMemoryFunc2_1000_EC46_01EC46);
         DefineFunction(cs1, 0xEC59, CallMemoryFunc1_1000_EC59_01EC59);
         DefineFunction(cs1, 0xDBB2, CallRestoreCursor_1000_DBB2_01DBB2);
+        DefineFunction(cs1, 0x4B16, FarCall38FDIfNeBuffers_1000_4B16_014B16);
+        DefineFunction(cs1, 0x0D0D, FarCall3951OrJmp0D23_1000_0D0D_010D0D);
+        DefineFunction(cs1, 0xC477, GfxCopyRectAtSi_1000_C477_01C477);
+        DefineFunction(cs1, 0xC4AA, GfxCopyRectToScreen_1000_C4AA_01C4AA);
     }
+
+    // Shared shape (gfx rect copy): read 4-word rect from [si]; bounds-check
+    // (sub bp,dx / sub ax,bx, jbe -> ret); push ds; es=[E]; ds=[B];
+    // ss: call far [ss:P]; pop ds; ret.  contIp = the `pop ds; ret`.
+    private System.Action GfxRectCopySsPtr(ushort gOffEs, ushort gOffDs, ushort ssPtr, ushort contIp) {
+        ushort origDs = DS;
+        ushort dx = UInt16[origDs, SI];
+        DX = dx;
+        ushort bx = UInt16[origDs, (ushort)(SI + 2)];
+        BX = bx;
+        ushort bp = UInt16[origDs, (ushort)(SI + 4)];
+        ushort ax = UInt16[origDs, (ushort)(SI + 6)];
+        ushort bpOrig = bp;
+        bp = (ushort)(bp - dx);
+        BP = bp;
+        if (bpOrig <= dx) {                              // sub bp,dx ; jbe -> ret
+            return NearRet();
+        }
+        ushort axOrig = ax;
+        ax = (ushort)(ax - bx);
+        AX = ax;
+        if (axOrig <= bx) {                              // sub ax,bx ; jbe -> ret
+            return NearRet();
+        }
+        ES = UInt16[origDs, gOffEs];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = origDs;  // push ds
+        DS = UInt16[origDs, gOffDs];
+        ushort off = UInt16[SS, ssPtr];
+        ushort seg = UInt16[SS, (ushort)(ssPtr + 2)];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = contIp;
+        return FarJump(seg, off);
+    }
+
+    /// <summary>cs1:0x4B16 — if <c>[0xDBD8] != [0xDBD6]</c>: <c>es = [0xDBD8]+0x1E0;
+    /// call far [0x38FD]</c>; else returns. Continuation = raw asm <c>C3</c>
+    /// @cs1:0x4B2A.</summary>
+    public System.Action FarCall38FDIfNeBuffers_1000_4B16_014B16(int gotoAddress) {
+        ushort ax = UInt16[DS, 0xDBD8];
+        AX = ax;
+        ushort si = UInt16[DS, 0xDBD6];
+        SI = si;
+        if (ax == si) {                                  // cmp ax,si ; jz 4B2A
+            ZeroFlag = true;
+            return NearRet();
+        }
+        ax = (ushort)(ax + 0x01E0);
+        AX = ax;
+        ES = ax;
+        ushort off = UInt16[DS, 0x38FD];
+        ushort seg = UInt16[DS, 0x38FF];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0x4B2A;
+        return FarJump(seg, off);
+    }
+
+    /// <summary>
+    /// cs1:0x0D0D — <c>al=bl; bx=0x0180; cx=0x0054; dl=0x37; jz 0x0D23</c> (on the
+    /// caller's incoming ZF); else <c>dec dx; cmp al,0x0A; jz 0x0D23</c>; else
+    /// <c>call far [0x3951]; ret</c>. 0x0D23 is the still-asm continuation body;
+    /// the call-far continuation = raw asm <c>C3</c> @cs1:0x0D22.
+    /// </summary>
+    public System.Action FarCall3951OrJmp0D23_1000_0D0D_010D0D(int gotoAddress) {
+        byte al = (byte)(BX & 0xFF);                     // mov al,bl (original BL)
+        AL = al;
+        BX = 0x0180;
+        CX = 0x0054;
+        DX = (ushort)((DX & 0xFF00) | 0x37);             // mov dl,0x37
+        if (ZeroFlag) {                                  // jz 0x0D23 (incoming ZF)
+            return NearJump(0x0D23);
+        }
+        DX = (ushort)(DX - 1);                            // dec dx
+        if (al == 0x0A) {                                 // cmp al,0x0A ; jz 0x0D23
+            return NearJump(0x0D23);
+        }
+        ushort off = UInt16[DS, 0x3951];
+        ushort seg = UInt16[DS, 0x3953];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0x0D22;
+        return FarJump(seg, off);
+    }
+
+    /// <summary>cs1:0xC477 — <c>gfx_copy_rect_at_si_ida</c>: rect bounds-check then
+    /// <c>es=[0xDBDE]; ds=[0xDBD6]; ss: call far [ss:0x38E5]</c>. Continuation =
+    /// raw asm <c>pop ds; ret</c> @cs1:0xC498.</summary>
+    public System.Action GfxCopyRectAtSi_1000_C477_01C477(int gotoAddress)
+        => GfxRectCopySsPtr(0xDBDE, 0xDBD6, 0x38E5, 0xC498);
+
+    /// <summary>cs1:0xC4AA — <c>gfx_copy_rect_to_screen_ida</c>: rect bounds-check then
+    /// <c>es=[0xDBD6]; ds=[0xDBD8]; ss: call far [ss:0x38F5]</c>. Continuation =
+    /// raw asm <c>pop ds; ret</c> @cs1:0xC4CB.</summary>
+    public System.Action GfxCopyRectToScreen_1000_C4AA_01C4AA(int gotoAddress)
+        => GfxRectCopySsPtr(0xDBD6, 0xDBD8, 0x38F5, 0xC4CB);
 
     // Shared shape: push ds; es=[A]; ds=[B]; ss: call far [ss:P]; pop ds; ret.
     private System.Action FarCallPushDsEsBSsPtr(ushort gOffEs, ushort gOffDs, ushort ssPtr, ushort contIp) {
