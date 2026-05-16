@@ -40,29 +40,26 @@ public partial class Overrides {
         DefineFunction(cs1, 0x3B59, "draw_SAL_ida");
         DefineFunction(cs1, 0x3BE9, "SAL_polygon_ida");
         DefineFunction(cs1, 0x3D83, "do_weird_shit_with_stack_buffer_ida");
-        DefineFunction(cs1, 0x55DD, "map_func_ida");
-        DefineFunction(cs1, 0x5E4F, "calc_SAL_index_ida");
+        // cs1:0x55DD map_func_ida — real C# override in MapCode.cs (ScanSpriteSheetClearBit4).
+        // cs1:0x5E4F calc_SAL_index_ida — real C# override in MapCode.cs (CalcSalIndex).
         DefineFunction(cs1, 0x63F0, "map_func_qq_ida");
         DefineFunction(cs1, 0x739E, "map_func_ida");
         DefineFunction(cs1, 0xA87E, "audio_test_frequency_ida");
         DefineFunction(cs1, 0xA90B, "open_res_file_ida");
         DefineFunction(cs1, 0xA93F, "read_audio_file_ida");
         DefineFunction(cs1, 0xA9A1, "close_res_file_handle_ida");
-        DefineFunction(cs1, 0xA9E7, "pcm_test_audio_done_ida");
+        // cs1:0xA9E7 pcm_test_audio_done_ida — real C# override in AudioCode.cs.
         DefineFunction(cs1, 0xAA0F, "decode_sd_block_ida");
-        DefineFunction(cs1, 0xAA70, "transfer_sd_block_qq_ida");
         DefineFunction(cs1, 0xAB15, "audio_start_voc_ida");
-        DefineFunction(cs1, 0xABA3, "check_res_file_open_ida");
+        // cs1:0xABA3 check_res_file_open_ida — real C# override in AudioCode.cs.
         DefineFunction(cs1, 0xABE9, "open_voc_resource_ida");
         DefineFunction(cs1, 0xAC14, "pcm_stop_voc_q_ida");
         DefineFunction(cs1, 0xAD57, "play_music_MORNING_HSQ_ida");
         DefineFunction(cs1, 0xAE62, "load_music_ida");
         DefineFunction(cs1, 0xB389, "open_sav_cl_ida");
         DefineFunction(cs1, 0xB427, "map_func_ida");
-        DefineFunction(cs1, 0xB58B, "map_func_ida");
-        DefineFunction(cs1, 0xB6C3, "map_func_ida");
-        DefineFunction(cs1, 0xB977, "map_func_gfx_ida");
-        DefineFunction(cs1, 0xBFE3, "map_func_ida");
+        // cs1:0xB58B/0xB6C3/0xB977/0xBFE3 — real C# overrides in MapCode.cs
+        // (ComputePolarOffset / GlobeRotationDispatch / GlobeFarBlit / ComputeFremenSpicePercentages).
         DefineFunction(cs1, 0xC097, "gfx_call_bp_with_front_buffer_as_screen_ida");
         DefineFunction(cs1, 0xC108, "transition_ida");
         DefineFunction(cs1, 0xC137, "load_icons_sprites_ida");
@@ -87,27 +84,27 @@ public partial class Overrides {
         DefineFunction(cs1, 0xCC96, "hnm_decode_video_frame_ida");
         DefineFunction(cs1, 0xCD8F, "hnm_read_header_size_ida");
         DefineFunction(cs1, 0xCDA0, "hnm_prepare_header_read_ida");
-        DefineFunction(cs1, 0xCE1A, "hnm_reset_ida");
+        // cs1:0xCE1A hnm_reset_ida — real C# override in HnmCode.cs (HnmReset).
         DefineFunction(cs1, 0xCE3B, "hnm_handle_pal_chunk_ida");
         DefineFunction(cs1, 0xCE6C, "initialize_memory_handler_ida");
         DefineFunction(cs1, 0xCEFC, "load_IRULn_HSQ_ida");
         // 0xCF1B play_IRULx_HSQ_ida — overridden in VideoCode.cs (harness fast-fwd).
-        DefineFunction(cs1, 0xCF4B, "IRULx_draw_or_clear_subtitle_ida");
-        DefineFunction(cs1, 0xCFA0, "check_amr_or_eng_language_ida");
-        DefineFunction(cs1, 0xD00F, "load_PHRASExx_HSQ_ida");
+        // cs1:0xCF4B — real C# override in DisplayCode.cs (IRULxDrawOrClearSubtitle).
+        // cs1:0xCFA0 — real C# override in AudioCode.cs (CheckAmrOrEngLanguage).
+        // cs1:0xD00F — real C# override in OuterVmHelpersCode.cs (ResolveScriptIndexAndLoadResource).
         //DefineFunction(segment, 0xDAE3, "set_mouse_pos_ida");
         DefineFunction(cs1, 0xDB14, "define_mouse_range_ida");
-        DefineFunction(cs1, 0xDB4C, "mouse_stuff_ida");
+        // cs1:0xDB4C — real C# override in InputCode.cs (MouseStuff).
         DefineFunction(cs1, 0xDBB2, "call_restore_cursor_ida");
         DefineFunction(cs1, 0xDBEC, "draw_mouse_ida");
         DefineFunction(cs1, 0xDC20, "redraw_mouse_ida");
         DefineFunction(cs1, 0xDCE0, "read_game_port_ida");
-        DefineFunction(cs1, 0xDD5A, "get_key_hit_ida");
+        // cs1:0xDD5A get_key_hit_ida — real C# override in InputCode.cs (GetKeyHit).
         DefineFunction(cs1, 0xDD63, "stc_on_user_input_ida");
         DefineFunction(cs1, 0xDE0C, "check_midi_ida");
         DefineFunction(cs1, 0xDF1E, "get_mouse_pos_etc_ida");
         DefineFunction(cs1, 0xE4AD, "parse_command_line_ida");
-        DefineFunction(cs1, 0xE56B, "parse_cmd_is_end_of_arg_ida");
+        // cs1:0xE56B parse_cmd_is_end_of_arg_ida — real C# override in MemoryResourceCode.cs.
         DefineFunction(cs1, 0xE57B, "load_driver_ax_with_vtable_at_si_ida");
         DefineFunction(cs1, 0xE594, "initialize_ida");
         DefineFunction(cs1, 0xE675, "open_dune_dat_ida");
@@ -117,7 +114,7 @@ public partial class Overrides {
         DefineFunction(cs1, 0xE8D5, "uninitialize_memory_driver_ida");
         DefineFunction(cs1, 0xE913, "install_interrupt_handlers_ida");
         DefineFunction(cs1, 0xE97A, "initialize_mouse_ida");
-        DefineFunction(cs1, 0xE9F4, "mouse_func_uncalled_ida");
+        // cs1:0xE9F4 — real C# override in InputCode.cs (MouseFuncUncalled, dead code, ported for completeness).
         DefineFunction(cs1, 0xEA32, "initialize_joystick_ida");
         DefineFunction(cs1, 0xEA7B, "memory_func_qq_ida");
         DefineFunction(cs1, 0xEAB7, "memory_func_qq_ida");
@@ -135,12 +132,12 @@ public partial class Overrides {
         DefineFunction(cs1, 0xEF2B, "call_xms_func_on_block_ida");
         DefineFunction(cs1, 0xEF32, "xms_move_memory_ida");
         DefineFunction(cs1, 0xF05C, "reset_keyboard_ida");
-        DefineFunction(cs1, 0xF08E, "clear_keyboard_array_ida");
+        // cs1:0xF08E clear_keyboard_array_ida — real C# override in InputCode.cs.
         DefineFunction(cs1, 0xF0A0, "open_resource_force_hsq_ida");
         DefineFunction(cs1, 0xF0B9, "open_resource_by_index_si_ida");
         DefineFunction(cs1, 0xF0D6, "read_and_maybe_hsq_ida");
         DefineFunction(cs1, 0xF0F6, "bump_alloc_get_addr_in_di_ida");
-        DefineFunction(cs1, 0xF0FF, "bump_allocate_bump_cx_bytes_ida");
+        // cs1:0xF0FF bump_allocate_bump_cx_bytes_ida — real C# override in MemoryResourceCode.cs.
         DefineFunction(cs1, 0xF11C, "alloc_cx_pages_to_di_ida");
         DefineFunction(cs1, 0xF13F, "allocator_attempt_to_free_space_ida");
         DefineFunction(cs1, 0xF1FB, "open_res_or_file_to_dx_size_ax_ida");
@@ -151,7 +148,7 @@ public partial class Overrides {
         DefineFunction(cs1, 0xF2A7, "seek_dune_dat_to_res_dsdx_ida");
         DefineFunction(cs1, 0xF2D6, "seek_dune_dat_offset_dxax_ida");
         DefineFunction(cs1, 0xF2EA, "read_dune_dat_cx_to_esdi_ida");
-        DefineFunction(cs1, 0xF2FC, "strcpy_to_filename_buf_ida");
+        // cs1:0xF2FC strcpy_to_filename_buf_ida — real C# override in MemoryResourceCode.cs.
         DefineFunction(cs1, 0xF314, "locate_res_by_name_dssi_ida");
         DefineFunction(cs1, 0xF403, "hsq_decomp_skip_header_dssi_to_esdi_ida");
         // Jumped to by self modifying code, needs to be there

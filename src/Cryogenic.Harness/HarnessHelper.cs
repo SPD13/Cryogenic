@@ -59,6 +59,10 @@ public sealed class HarnessHelper : CSharpOverrideHelper {
         DoOnTopOfInstruction(cp.Segment, cp.Offset, OnCheckpointHit);
         Console.Error.WriteLine($"[harness] checkpoint armed @ {cp.Segment:X4}:{cp.Offset:X4}");
 
+        if (_options.SkipIntroViaEsc) {
+            InstallIntroSkipHook();
+        }
+
         // Harness-fwd diagnostic hooks. Passive — these run on top of
         // the native instruction and don't replace it. Used to localise
         // where the boot intro stalls under headless emulation.
@@ -127,6 +131,58 @@ public sealed class HarnessHelper : CSharpOverrideHelper {
 
             InstallKnownFunctionTraces();
         }
+    }
+
+    /// <summary>
+    /// Auto-skip the boot intro by hooking the engine's Esc consumer at
+    /// <c>cs1:0xDE54</c> and stuffing scancode 1 into the latch at
+    /// <c>ds:0xCEE8</c> before each read. The consumer (decoded in
+    /// Tech/45) checks the latch byte; if it equals 1 it reports
+    /// "Esc was pressed" via ZF=1, which the boot intro's HNM playback
+    /// + IRULAN voice prompts + palace interlude treat as a skip
+    /// command.
+    ///
+    /// Boot sequence:
+    ///   cs1:0x000C   FB (sti) — harness checkpoint
+    ///   cs1:0x000D   call play_intro (cs1:0x580)        ← Esc skips HNMs
+    ///   cs1:0x0010   call 0x0309
+    ///   cs1:0x0013   call play_intro2 (cs1:0x21C)       ← Esc skips IRULAN
+    ///                play_intro2 NEVER returns — it `jmp 0x8F0`
+    ///   cs1:0x08F0   ★ main game loop entry (gameplay starts here)
+    ///
+    /// So the "intro done" signal is "cs1:0x8F0 has been reached". We
+    /// hook 0x8F0 to flip a flag; until then, every cs1:0xDE54 call gets
+    /// Esc-injected. Once 0x8F0 fires, the hook becomes a no-op so the
+    /// main game loop's natural input flow (if any) is preserved.
+    /// </summary>
+    private void InstallIntroSkipHook() {
+        // Linear addresses derived from the engine's data segment layout
+        // (DS = 0x2000 paragraph at boot, per spice86dumpMemoryDump.bin).
+        const uint LinearEscLatch = 0x20000 + 0xCEE8;
+        long injections = 0;
+        bool introDone = false;
+
+        // cs1:0x08F0 is the main game loop entry that play_intro2 jmps
+        // to after IRULAN finishes (or after Esc-skip).
+        DoOnTopOfInstruction(0x1000, 0x08F0, () => {
+            if (introDone) return;
+            introDone = true;
+            Console.Error.WriteLine(
+                $"[harness] intro-skip: reached cs1:0x08F0 (main game loop) after {injections} Esc injections, cycles={State.Cycles}");
+        });
+
+        // cs1:0xDE54 is the Esc consumer per Tech/45.
+        DoOnTopOfInstruction(0x1000, 0xDE54, () => {
+            if (introDone) return;
+            Memory.UInt8[LinearEscLatch] = 0x01;
+            injections++;
+            if (injections == 1 || injections % 1000 == 0) {
+                Console.Error.WriteLine(
+                    $"[harness] esc-injection #{injections} cycles={State.Cycles}");
+            }
+        });
+        Console.Error.WriteLine(
+            "[harness] intro-skip armed — injecting Esc at cs1:0xDE54 until cs1:0x8F0 (main loop entry)");
     }
 
     /// <summary>

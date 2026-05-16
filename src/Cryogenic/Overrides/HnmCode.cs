@@ -26,6 +26,48 @@ public partial class Overrides {
     /// </summary>
     public void DefineHnmCodeOverrides() {
         DefineFunction(cs1, 0xCDBF, HnmReadFromFileHandle_1000_CDBF_01CDBF);
+        DefineFunction(cs1, 0xCE1A, HnmReset_1000_CE1A_01CE1A);
+    }
+
+    /// <summary>
+    /// Override for cs1:0xCE1A — <c>hnm_reset_ida</c>. Resets the HNM decoder state block
+    /// at <c>ds:0xDC0C..0xDC20</c>.
+    /// </summary>
+    /// <remarks>
+    /// Asm (33 bytes):
+    /// <code>
+    /// CE1A: A1 DE DB     mov ax, [0xDBDE]
+    /// CE1D: A3 0E DC     mov [0xDC0E], ax
+    /// CE20: A3 12 DC     mov [0xDC12], ax
+    /// CE23: 33 C0        xor ax, ax
+    /// CE25: A3 0C DC     mov [0xDC0C], ax
+    /// CE28: A3 10 DC     mov [0xDC10], ax
+    /// CE2B: A3 1A DC     mov [0xDC1A], ax
+    /// CE2E: A3 20 DC     mov [0xDC20], ax
+    /// CE31: A3 16 DC     mov [0xDC16], ax
+    /// CE34: A1 74 CE     mov ax, [0xCE74]
+    /// CE37: A3 18 DC     mov [0xDC18], ax
+    /// CE3A: C3           ret
+    /// </code>
+    /// Pure leaf. Seeds <c>[0xDC0E]</c> / <c>[0xDC12]</c> with the active framebuffer
+    /// (<c>[0xDBDE]</c>), zeroes five decoder cursors, and copies the default chunk
+    /// pointer from <c>[0xCE74]</c> into <c>[0xDC18]</c>.
+    /// </remarks>
+    public Action HnmReset_1000_CE1A_01CE1A(int gotoAddress) {
+        ushort dbde = UInt16[DS, 0xDBDE];
+        AX = dbde;
+        UInt16[DS, 0xDC0E] = dbde;
+        UInt16[DS, 0xDC12] = dbde;
+        AX = 0;
+        UInt16[DS, 0xDC0C] = 0;
+        UInt16[DS, 0xDC10] = 0;
+        UInt16[DS, 0xDC1A] = 0;
+        UInt16[DS, 0xDC20] = 0;
+        UInt16[DS, 0xDC16] = 0;
+        ushort ce74 = UInt16[DS, 0xCE74];
+        AX = ce74;
+        UInt16[DS, 0xDC18] = ce74;
+        return NearRet();
     }
 
     /// <summary>

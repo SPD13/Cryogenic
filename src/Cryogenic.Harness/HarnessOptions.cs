@@ -97,6 +97,28 @@ public sealed class HarnessOptions {
 
     /// <summary>Set true once the trace's max-cycles cap fires, so we don't double-exit.</summary>
     public bool TraceCapTripped { get; set; } = false;
+
+    /// <summary>
+    /// Auto-skip the boot intro by simulating Esc key-down events. When set,
+    /// the harness hooks <c>cs1:0xDE54</c> (the engine's Esc consumer per
+    /// Tech/45) and writes <c>ds:0xCEE8 = 1</c> (scancode 1 latch) on every
+    /// entry — provided the engine hasn't yet landed on the configured
+    /// stop-scene. The consumer reads the latch, sees scancode 1, treats it
+    /// as Esc, and the boot intro's HNM playback skips to the next record.
+    /// Net effect: instead of waiting ~75-90 wall-seconds for VIRGIN/CRYO/
+    /// CREDITS/PRESENT/INTRO/IRULAN/palace-interlude/MTG1/MTG2 to play in
+    /// real time, the harness skips them in &lt;5 sec and lands on the
+    /// porch (scene 0) within ~30 sec total wall time.
+    /// </summary>
+    public bool SkipIntroViaEsc { get; set; } = false;
+
+    /// <summary>
+    /// Stop injecting Esc once <c>ds:0x47BE</c> (scene_id) reaches this value.
+    /// Default 0 = stop when the porch loads (since scene 0 is the porch).
+    /// Set to a higher number to also skip the first N gameplay scene
+    /// transitions; set to -1 to inject forever (debug only).
+    /// </summary>
+    public int SkipIntroStopAtSceneId { get; set; } = 0;
 }
 
 public enum HarnessMode {

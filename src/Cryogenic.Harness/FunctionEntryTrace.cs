@@ -23,20 +23,34 @@ using Spice86.Shared.Emulator.VM.Breakpoint;
 public sealed class FunctionEntryTrace : IDisposable {
     /// <summary>
     /// One traced address. <paramref name="DsSiBytes"/> excerpts the bytes at
-    /// DS:SI on hit. <paramref name="ExtraReads"/> lists additional linear
-    /// addresses to log as named u16 LE values (e.g. for the per-resource
-    /// state byte at [DS:0xDC00] — pass `0xDC00 + (DS_BASE_PARAGRAPH<<4)`).
+    /// DS:SI on hit. <paramref name="CsSiBytes"/> excerpts at CS:SI (use this
+    /// for cs1:0x13C8 / cs1:0x3D83 style sites that read a list out of CS).
+    /// <paramref name="ExtraReads"/> lists additional linear addresses to log
+    /// as named u16 LE values (e.g. for the per-resource state byte at
+    /// [DS:0xDC00] — pass `0xDC00 + (DS_BASE_PARAGRAPH&lt;&lt;4)`).
+    /// <paramref name="SegRegReads"/> captures register-relative excerpts
+    /// (e.g. read 32 bytes from CS:[BP] to log a dispatcher's resume target).
     /// </summary>
     public sealed record Entry(
         uint LinearAddress,
         string Label,
         int DsSiBytes,
-        IReadOnlyList<(string Name, uint Linear, int Bytes)>? ExtraReads = null);
+        IReadOnlyList<(string Name, uint Linear, int Bytes)>? ExtraReads = null,
+        int CsSiBytes = 0,
+        IReadOnlyList<SegRegRead>? SegRegReads = null);
+
+    /// <summary>
+    /// A register-relative memory read. <paramref name="Segment"/> and
+    /// <paramref name="Offset"/> name the registers (e.g. "CS" + "BP") and
+    /// <paramref name="Bytes"/> is the excerpt length (capped at 64).
+    /// </summary>
+    public sealed record SegRegRead(string Name, string Segment, string Offset, int Bytes);
 
     private readonly EmulatorBreakpointsManager _bpm;
     private readonly State _state;
     private readonly IMemory _memory;
     private readonly StreamWriter _writer;
+    private readonly string _traceOutputPath;
     private readonly List<AddressBreakPoint> _breakpoints = new();
     private long _events;
     private long _cycleCap = -1;
@@ -52,6 +66,7 @@ public sealed class FunctionEntryTrace : IDisposable {
         _bpm = bpm;
         _state = state;
         _memory = memory;
+        _traceOutputPath = outputPath;
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         _writer = new StreamWriter(outputPath, append: false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
@@ -117,12 +132,55 @@ public sealed class FunctionEntryTrace : IDisposable {
             }
             _writer.Write($",\"ds_si\":\"{Convert.ToHexString(buf[..n])}\"");
         }
+        if (e.CsSiBytes > 0) {
+            uint linear = (uint)((_state.CS << 4) + _state.SI);
+            int n = e.CsSiBytes;
+            Span<byte> buf = stackalloc byte[64];
+            if (n > buf.Length) n = buf.Length;
+            for (int i = 0; i < n; i++) {
+                buf[i] = _memory.UInt8[linear + (uint)i];
+            }
+            _writer.Write($",\"cs_si\":\"{Convert.ToHexString(buf[..n])}\"");
+        }
+        if (e.SegRegReads is { Count: > 0 } segReads) {
+            Span<byte> sbuf = stackalloc byte[64];
+            foreach (SegRegRead r in segReads) {
+                ushort seg = RegWord(r.Segment);
+                ushort off = RegWord(r.Offset);
+                uint linear = (uint)((seg << 4) + off);
+                int n = Math.Min(r.Bytes, 64);
+                for (int i = 0; i < n; i++) sbuf[i] = _memory.UInt8[linear + (uint)i];
+                _writer.Write($",\"{Escape(r.Name)}\":\"{Convert.ToHexString(sbuf[..n])}\"");
+                _writer.Write($",\"{Escape(r.Name)}_addr\":\"{seg:X4}:{off:X4}\"");
+            }
+        }
         if (e.ExtraReads is { Count: > 0 } reads) {
+            // Two output modes per read entry:
+            //   • bytes ≤ 16 : inline hex in the JSON record (compact, fast).
+            //   • bytes  > 16: writes a sidecar `<label>__<name>__c{cycles}.bin`
+            //                  in the same directory as the ndjson, and the
+            //                  JSON record carries the filename + length so
+            //                  the post-processor can join. This avoids
+            //                  blowing up the trace JSON for big dumps
+            //                  (e.g. capturing the 1280-byte menu-type
+            //                  definition region on a PUSH).
+            Span<byte> rbufInline = stackalloc byte[16];
             foreach ((string name, uint linear, int bytes) in reads) {
-                int n = Math.Min(bytes, 16);
-                Span<byte> buf = stackalloc byte[16];
-                for (int i = 0; i < n; i++) buf[i] = _memory.UInt8[linear + (uint)i];
-                _writer.Write($",\"{Escape(name)}\":\"{Convert.ToHexString(buf[..n])}\"");
+                if (bytes <= 16) {
+                    int n = bytes;
+                    for (int i = 0; i < n; i++) rbufInline[i] = _memory.UInt8[linear + (uint)i];
+                    _writer.Write($",\"{Escape(name)}\":\"{Convert.ToHexString(rbufInline[..n])}\"");
+                } else {
+                    byte[] big = new byte[bytes];
+                    for (int i = 0; i < bytes; i++) big[i] = _memory.UInt8[linear + (uint)i];
+                    string traceDir = Path.GetDirectoryName(_traceOutputPath) ?? ".";
+                    string filename = $"{e.Label}__{name}__c{_state.Cycles}.bin";
+                    string path = Path.Combine(traceDir, filename);
+                    File.WriteAllBytes(path, big);
+                    _writer.Write($",\"{Escape(name)}_file\":\"{Escape(filename)}\"");
+                    _writer.Write($",\"{Escape(name)}_len\":{bytes}");
+                    _writer.Write($",\"{Escape(name)}_addr\":\"{linear:X5}\"");
+                }
             }
         }
         _writer.WriteLine('}');
@@ -134,6 +192,31 @@ public sealed class FunctionEntryTrace : IDisposable {
 
     private static string Escape(string s) {
         return s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+    }
+
+    /// <summary>
+    /// Resolve a register name (case-insensitive) to its current u16 value.
+    /// Supports the segment registers (CS/DS/ES/SS/FS/GS) and the general-
+    /// purpose 16-bit regs (AX/BX/CX/DX/SI/DI/BP/SP). Throws for unknown.
+    /// </summary>
+    private ushort RegWord(string name) {
+        return name.ToUpperInvariant() switch {
+            "CS" => _state.CS,
+            "DS" => _state.DS,
+            "ES" => _state.ES,
+            "SS" => _state.SS,
+            "FS" => _state.FS,
+            "GS" => _state.GS,
+            "AX" => _state.AX,
+            "BX" => _state.BX,
+            "CX" => _state.CX,
+            "DX" => _state.DX,
+            "SI" => _state.SI,
+            "DI" => _state.DI,
+            "BP" => _state.BP,
+            "SP" => _state.SP,
+            _ => throw new ArgumentException($"unknown register name '{name}' in trace-fn seg-reg read"),
+        };
     }
 
     public void Dispose() {

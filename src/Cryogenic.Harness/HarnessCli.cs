@@ -144,6 +144,17 @@ public static class HarnessCli {
                     opt.MaxCyclesAfterCheckpoint = ulong.Parse(next, System.Globalization.NumberStyles.Integer);
                     i++;
                     break;
+                case "--skip-intro":
+                    opt.SkipIntroViaEsc = true;
+                    break;
+                case "--skip-intro-until":
+                    if (next is null) {
+                        throw new ArgumentException("--skip-intro-until requires a scene_id (decimal or 0xHEX)");
+                    }
+                    opt.SkipIntroViaEsc = true;
+                    opt.SkipIntroStopAtSceneId = (int)ParseUInt(next);
+                    i++;
+                    break;
                 case "-h":
                 case "--help":
                 case "--harness-help":
@@ -192,40 +203,75 @@ public static class HarnessCli {
 
     private static FunctionEntryTrace.Entry ParseTraceEntry(string s) {
         // Accept: "1000:CC96", "1000:CC96:hnm_decode", "1000:CC96:hnm_decode:32",
-        // "1000:CC96:hnm_decode:32@dc00=0x2D0B0,2"
-        // The trailing "@name=linear,bytes,name=linear,bytes,…" part adds
-        // arbitrary memory reads to log alongside the regs.
+        // "1000:CC96:hnm_decode:32@dc00=0x2D0B0;2"
+        // The outer SEG:OFF[:LABEL[:BYTES]] format splits on ':' so the BYTES
+        // segment-selector uses ';' as its internal separator:
+        //   "32"            → read 32 bytes at DS:SI (back-compat)
+        //   "ds;32"         → same as bare 32
+        //   "cs;32"         → read 32 bytes at CS:SI instead
+        //   "ds;32+cs;48"   → read both (DS:SI 32 bytes + CS:SI 48 bytes)
+        // Trailing "@..." part supports two read-spec forms:
+        //   "name=LINEAR;BYTES"        (existing — fixed linear address)
+        //   "name=SEG;REG;BYTES"       (NEW — register-relative, e.g. CS;BP;4)
         string[] readParts = s.Split('@');
         string head = readParts[0];
         string[] parts = head.Split(':');
         if (parts.Length < 2) {
-            throw new ArgumentException($"--trace-fn: expected SEG:OFF[:LABEL[:DS_SI_BYTES][@reads]], got '{s}'");
+            throw new ArgumentException($"--trace-fn: expected SEG:OFF[:LABEL[:BYTES][@reads]], got '{s}'");
         }
         ushort seg = ushort.Parse(parts[0], System.Globalization.NumberStyles.HexNumber);
         ushort off = ushort.Parse(parts[1], System.Globalization.NumberStyles.HexNumber);
         uint linear = (uint)((seg << 4) + off);
         string label = parts.Length >= 3 ? parts[2] : $"{seg:X4}_{off:X4}";
-        int dsSi = parts.Length >= 4 ? int.Parse(parts[3]) : 0;
+        int dsSi = 0;
+        int csSi = 0;
+        if (parts.Length >= 4) {
+            // Tokens like "32", "cs;48", "ds;32+cs;48"
+            foreach (string tok in parts[3].Split('+')) {
+                string t = tok.Trim();
+                if (t.Length == 0) continue;
+                int semi = t.IndexOf(';');
+                if (semi < 0) { dsSi = int.Parse(t); continue; }
+                string segName = t[..semi].ToLowerInvariant();
+                int n = int.Parse(t[(semi + 1)..]);
+                if (segName == "ds") dsSi = n;
+                else if (segName == "cs") csSi = n;
+                else throw new ArgumentException($"--trace-fn: unknown segment '{segName}' in BYTES (use ds; or cs;)");
+            }
+        }
         List<(string, uint, int)>? reads = null;
+        List<FunctionEntryTrace.SegRegRead>? segReads = null;
         if (readParts.Length > 1) {
-            reads = new();
             foreach (string entry in readParts[1].Split(',')) {
                 int eq = entry.IndexOf('=');
-                int comma = entry.LastIndexOf(',');
-                // Each entry is "name=linear:bytes" — but we already split on
-                // commas. Format expected: "name=LINEAR:BYTES" (use ':' separator).
                 if (eq < 0) throw new ArgumentException($"--trace-fn: bad read spec '{entry}'");
                 string name = entry[..eq];
                 string rest = entry[(eq + 1)..];
-                int colon = rest.IndexOf(';');
-                if (colon < 0) throw new ArgumentException($"--trace-fn: read needs LINEAR;BYTES separator (got '{entry}')");
-                uint readLinear = ParseUIntHex(rest[..colon]);
-                int readBytes = int.Parse(rest[(colon + 1)..]);
-                reads.Add((name, readLinear, readBytes));
+                // Register-relative form has TWO semicolons (e.g. "CS;BP;4");
+                // fixed-linear form has ONE (e.g. "0x247BE;2").
+                string[] restParts = rest.Split(';');
+                if (restParts.Length == 3 && IsRegName(restParts[0]) && IsRegName(restParts[1])) {
+                    int readBytes = int.Parse(restParts[2]);
+                    segReads ??= new();
+                    segReads.Add(new FunctionEntryTrace.SegRegRead(name, restParts[0], restParts[1], readBytes));
+                } else if (restParts.Length == 2) {
+                    uint readLinear = ParseUIntHex(restParts[0]);
+                    int readBytes = int.Parse(restParts[1]);
+                    reads ??= new();
+                    reads.Add((name, readLinear, readBytes));
+                } else {
+                    throw new ArgumentException($"--trace-fn: read spec '{entry}' must be 'name=LINEAR;BYTES' or 'name=SEG;REG;BYTES'");
+                }
             }
         }
-        return new FunctionEntryTrace.Entry(linear, label, dsSi, reads);
+        return new FunctionEntryTrace.Entry(linear, label, dsSi, reads, csSi, segReads);
     }
+
+    private static readonly System.Collections.Generic.HashSet<string> _regNames = new(StringComparer.OrdinalIgnoreCase) {
+        "CS", "DS", "ES", "SS", "FS", "GS",
+        "AX", "BX", "CX", "DX", "SI", "DI", "BP", "SP",
+    };
+    private static bool IsRegName(string s) => _regNames.Contains(s);
 
     private static uint ParseUIntHex(string s) {
         if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) {
@@ -313,6 +359,19 @@ public static class HarnessCli {
             "  --invoke-budget N        Hard instruction-count cap. Default 5,000,000.\n" +
             "  --return-dump DIR        Dump RAM/state when sentinel fires.\n" +
             "  --dump-before-invoke     Dump RAM/state before the redirect (for memdiff).\n" +
+            "  --skip-intro             Skip the boot intro (HNMs + IRULAN + palace interlude +\n" +
+            "                           MTG1/MTG2) by injecting Esc scancode (1) into ds:0xCEE8\n" +
+            "                           each time the engine's Esc consumer at cs1:0xDE54 reads.\n" +
+            "                           Stops when scene_id (ds:0x47BE) reaches the porch (0).\n" +
+            "                           Cuts boot-to-porch wall time from ~90 s to ~30 s.\n" +
+            "  --skip-intro-until N     Same as --skip-intro but stop at scene_id = N. Decimal\n" +
+            "                           or 0xHEX. Default with bare --skip-intro is 0.\n" +
+            "  --trace-fn SEG:OFF[:LABEL[:BYTES][@reads]]\n" +
+            "                           Sparse function-entry trace. BYTES is bare (DS:SI),\n" +
+            "                           or 'ds:N' / 'cs:N' / 'ds:N+cs:N' for both segments.\n" +
+            "                           '@reads' adds named memory excerpts: comma-separated\n" +
+            "                           'name=LINEAR;BYTES' (fixed) or 'name=SEG:REG;BYTES'\n" +
+            "                           (register-relative, e.g. CS:BP). Repeatable.\n" +
             "  --trace-instr            Per-instruction ndjson trace inside --instr-range.\n" +
             "  --instr-range START-END  Linear-address window for the instruction trace.\n" +
             "  --write-mem LINEAR=HEX   Write hex bytes to memory before the redirect (repeatable).\n" +

@@ -228,24 +228,41 @@ def main():
                 unmatched_count += 1
             else:
                 _, _, ai, fi, m_count, mm_count, ct = best
-                # Lowered threshold to 70% — engine background pixels show
-                # through transparent character pixels and may not match the
-                # zero-fill in my composite. 70% character-pixel match is
-                # solid enough for a confident annotation.
                 if m_count >= ct * 0.7:
-                    ann['anim_idx'] = ai
-                    ann['frame_idx'] = fi
                     ann['match_char_pixels'] = f'{m_count}/{ct}'
                     same = [s for s in scored if s[0] == m_count and s[1] == -mm_count]
                     if len(same) == 1:
+                        ann['anim_idx'] = ai
+                        ann['frame_idx'] = fi
                         ann['match'] = 'unique'
                         unique_count += 1
                     else:
-                        # Don't prefer anim 0 anymore — the highest-scoring
-                        # candidate already won. The tie just means multiple
-                        # animations share an identical-content frame at this
-                        # slot (e.g. JESS anim 0 frame 13 == anim 4 frame 22).
-                        # Keep the matcher's first pick (already in `best`).
+                        # Ambiguous: the slot's content matches multiple
+                        # (anim, frame) variants identically. The slot is
+                        # typically only one feature (eyes OR mouth), so a
+                        # "tied" set means many frames share the slot
+                        # content but differ ELSEWHERE in the composite
+                        # (e.g. different mouth pose with same eyes).
+                        # Picking the same candidate every time would
+                        # render an unchanging mouth even when the engine
+                        # cycles through varied mouths.
+                        #
+                        # Rotate through tied candidates using the event
+                        # index so each scheduled paint picks a different
+                        # tied frame — this visits more mouth variants
+                        # across the scene. Prefer anim 4 (the longest
+                        # JESS animation) and anim 2/3 (LETO talking)
+                        # when present, dropping anim 0/1 from ties.
+                        preferred_anim = {'dining_jess_dialog': {4},
+                                          'throne_leto': {2, 3},
+                                          'paul': {0}}.get(sid, set())
+                        if preferred_anim:
+                            preferred = [s for s in same if s[2] in preferred_anim]
+                            if preferred:
+                                same = preferred
+                        pick = same[i % len(same)]
+                        ann['anim_idx'] = pick[2]
+                        ann['frame_idx'] = pick[3]
                         ann['match'] = f'ambiguous-{len(same)}'
                         ambiguous_count += 1
                     key = ann['anim_idx']
