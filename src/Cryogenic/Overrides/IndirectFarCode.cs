@@ -54,6 +54,137 @@ public partial class Overrides {
         DefineFunction(cs1, 0xC53E, FarCall3901_1000_C53E_01C53E);
         DefineFunction(cs1, 0xD741, FarCall38DDIfBelow3_1000_D741_01D741);
         DefineFunction(cs1, 0xEFBA, FarCall3981Guarded_1000_EFBA_01EFBA);
+        DefineFunction(cs1, 0xC8C1, ClippedBlitBp_1000_C8C1_01C8C1);
+        DefineFunction(cs1, 0xC30D, LdsVertexFarCall38CD_1000_C30D_01C30D);
+        DefineFunction(cs1, 0xC343, LdsVertexFarCall38CDB_1000_C343_01C343);
+        DefineFunction(cs1, 0x1A9B, GetPtrThenFarCall38CD_1000_1A9B_011A9B);
+    }
+
+    /// <summary>
+    /// cs1:0xC8C1 — saturating-clamp clipped blit. <c>si=bp*4</c>; <c>dx</c>/<c>bx</c>
+    /// saturating-subtract <c>[si+0x2796]</c>/<c>[si+0x2798]</c> (clamp to 0 on borrow);
+    /// then <c>es=[0xDBD8]; ds=[0xDBD6]; ss: call far [ss:0x3949]</c>. Continuation =
+    /// raw asm (pop ds; pop bx; the <c>[0xCE7A]</c> vs <c>[0xDBE6]</c> poll loop;
+    /// pop dx; pop bx; ret) @cs1:0xC8EB. Pushes bx/dx/[0xCE7A]/ds (the raw epilogue
+    /// pops all four).
+    /// </summary>
+    public System.Action ClippedBlitBp_1000_C8C1_01C8C1(int gotoAddress) {
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = BX;            // push bx
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = DX;            // push dx
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = UInt16[DS, 0xCE7A];   // push word [0xCE7A]
+        ushort si = (ushort)(BP << 2);                          // mov si,bp; shl si,1 ×2
+        SI = si;
+        ushort m1 = UInt16[DS, (ushort)(si + 0x2796)];
+        DX = DX < m1 ? (ushort)0 : (ushort)(DX - m1);          // sub dx,[..]; jnc; xor dx,dx
+        ushort m2 = UInt16[DS, (ushort)(si + 0x2798)];
+        BX = BX < m2 ? (ushort)0 : (ushort)(BX - m2);          // sub bx,[..]; jnc; xor bx,bx
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = DS;            // push ds
+        ES = UInt16[DS, 0xDBD8];
+        DS = UInt16[DS, 0xDBD6];
+        ushort off = UInt16[SS, 0x3949];
+        ushort seg = UInt16[SS, 0x394B];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0xC8EB;
+        return FarJump(seg, off);
+    }
+
+    // 0xC30D/0xC343 — es=[0xDBDA]; lds si,[0xDBB0] (DS reloaded!); bp=ax*2;
+    // si += ds:[bp+si]; read di/cx from the stream; bp=0xD834;
+    // ss: call far [ss:0x38CD]; continuation = raw asm `push ss; pop ds; ret`.
+    /// <summary>cs1:0xC30D — lds-vertex stream reader → <c>ss: call far
+    /// [ss:0x38CD]</c>. Continuation @cs1:0xC32C.</summary>
+    public System.Action LdsVertexFarCall38CD_1000_C30D_01C30D(int gotoAddress) {
+        ES = UInt16[DS, 0xDBDA];
+        ushort newSi = UInt16[DS, 0xDBB0];                      // lds si,[0xDBB0]
+        ushort newDs = UInt16[DS, 0xDBB2];
+        SI = newSi;
+        DS = newDs;
+        ushort bp = (ushort)(AX << 1);                          // mov bp,ax; shl bp,1
+        SI = (ushort)(SI + UInt16[DS, (ushort)(bp + SI)]);      // ds: add si,[bp+si]
+        ushort di = UInt16[DS, SI];                             // lodsw; mov di,ax
+        SI = (ushort)(SI + 2);
+        DI = di;
+        byte lo = UInt8[DS, SI];                                // lodsw; xor ah,ah; mov cx,ax
+        SI = (ushort)(SI + 2);
+        AX = lo;
+        CX = lo;
+        BP = 0xD834;
+        ushort off = UInt16[SS, 0x38CD];
+        ushort seg = UInt16[SS, 0x38CF];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0xC32C;
+        return FarJump(seg, off);
+    }
+
+    /// <summary>cs1:0xC343 — lds-vertex stream reader (with extra dx/bx adjusts) →
+    /// <c>ss: call far [ss:0x38CD]</c>. Continuation @cs1:0xC36D.</summary>
+    public System.Action LdsVertexFarCall38CDB_1000_C343_01C343(int gotoAddress) {
+        ES = UInt16[DS, 0xDBDA];
+        ushort newSi = UInt16[DS, 0xDBB0];
+        ushort newDs = UInt16[DS, 0xDBB2];
+        SI = newSi;
+        DS = newDs;
+        ushort bp = (ushort)(AX << 1);
+        SI = (ushort)(SI + UInt16[DS, (ushort)(bp + SI)]);
+        ushort di = UInt16[DS, SI];                             // lodsw; mov di,ax
+        SI = (ushort)(SI + 2);
+        DI = di;
+        // and ah,0x0F ; shr ax,1 ; sub dx,ax
+        ushort ax = (ushort)(((di & 0x0F00) | (di & 0x00FF)) >> 1);
+        AX = ax;
+        DX = (ushort)(DX - ax);
+        ushort w2 = UInt16[DS, SI];                             // lodsw
+        SI = (ushort)(SI + 2);
+        ushort cx = (ushort)(w2 & 0x00FF);                      // xor ah,ah ; mov cx,ax
+        CX = cx;
+        ax = (ushort)(cx >> 1);                                 // shr ax,1
+        AX = ax;
+        BX = (ushort)(BX - ax);                                 // sub bx,ax
+        BP = 0xD834;
+        ushort off = UInt16[SS, 0x38CD];
+        ushort seg = UInt16[SS, 0x38CF];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0xC36D;
+        return FarJump(seg, off);
+    }
+
+    /// <summary>
+    /// cs1:0x1A9B — reads two words (dx,bx) from <c>ds:si</c>; if <c>dx==0</c> returns;
+    /// else calls C# <see cref="GetEsSiPointerToUnknown_1000_C1F4_01C1F4"/>, sets
+    /// <c>es=[0xDBD8]</c> / <c>ds=old es</c>, reads di/cx, <c>bp=0x1EFE</c>, then
+    /// <c>ss: call far [ss:0x38CD]</c>. Continuation = raw asm
+    /// <c>pop ds; pop si; ret</c> @cs1:0x1AC2.
+    /// </summary>
+    public System.Action GetPtrThenFarCall38CD_1000_1A9B_011A9B(int gotoAddress) {
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = AX;            // push ax
+        ushort dx = UInt16[DS, SI]; SI = (ushort)(SI + 2);     // lodsw; mov dx,ax
+        DX = dx;
+        ushort bx = UInt16[DS, SI]; SI = (ushort)(SI + 2);     // lodsw; mov bx,ax
+        BX = bx;
+        AX = UInt16[SS, SP]; SP = (ushort)(SP + 2);            // pop ax
+        if (dx == 0) {                                          // or dx,dx ; jz 1AC4
+            ZeroFlag = true;
+            return NearRet();
+        }
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = SI;            // push si
+        GetEsSiPointerToUnknown_1000_C1F4_01C1F4(0);           // call C# 0xC1F4
+        ushort ds0 = DS;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = ds0;           // push ds
+        ushort es0 = ES;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = es0;           // push es
+        ES = UInt16[ds0, 0xDBD8];                               // mov es,[0xDBD8]
+        DS = UInt16[SS, SP]; SP = (ushort)(SP + 2);            // pop ds (= es0)
+        ushort di = UInt16[DS, SI]; SI = (ushort)(SI + 2);     // lodsw; mov di,ax
+        DI = di;
+        ushort cx = (ushort)(UInt16[DS, SI] & 0x00FF);          // lodsw; mov cx,ax; xor ch,ch
+        SI = (ushort)(SI + 2);
+        CX = cx;
+        BP = 0x1EFE;
+        ushort off = UInt16[SS, 0x38CD];
+        ushort seg = UInt16[SS, 0x38CF];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0x1AC2;
+        return FarJump(seg, off);
     }
 
     /// <summary>cs1:0xC53E — <c>si=0x276A; bp=[0x2772]; al=[0xDBE4];
