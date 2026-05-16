@@ -44,6 +44,61 @@ public partial class Overrides {
         DefineFunction(cs1, 0xADE0, FarCall397DAlt_1000_ADE0_01ADE0);
         DefineFunction(cs1, 0xA637, FarCall39A5_1000_A637_01A637);
         DefineFunction(cs1, 0xA650, FarCall3985_1000_A650_01A650);
+        DefineFunction(cs1, 0xD42F, DispatchCx4_1000_D42F_01D42F);
+        DefineFunction(cs1, 0xD434, DispatchCx3_1000_D434_01D434);
+        DefineFunction(cs1, 0xD439, DispatchCx2_1000_D439_01D439);
+        DefineFunction(cs1, 0xD43E, DispatchCx1_1000_D43E_01D43E);
+        DefineFunction(cs1, 0xC43E, BlitSi1470_1000_C43E_01C43E);
+        DefineFunction(cs1, 0xC443, BlitSiD834_1000_C443_01C443);
+        DefineFunction(cs1, 0xC474, RectCopySi1470_1000_C474_01C474);
+    }
+
+    // 0xD42F/34/39/3E — parameterized entries that set CX then jump into the
+    // shared dispatcher body at cs1:0xD445 (call C# 0xD454; or bx,bx; test ah,0x40;
+    // jmp bx; ret — same body as DispatcherJumpsToBX 0xD443 minus the xor cx,cx).
+    /// <summary>cs1:0xD42F — <c>mov cx,4; jmp 0xD445</c>.</summary>
+    public System.Action DispatchCx4_1000_D42F_01D42F(int gotoAddress) {
+        CX = 4;
+        return NearJump(0xD445);
+    }
+
+    /// <summary>cs1:0xD434 — <c>mov cx,3; jmp 0xD445</c>.</summary>
+    public System.Action DispatchCx3_1000_D434_01D434(int gotoAddress) {
+        CX = 3;
+        return NearJump(0xD445);
+    }
+
+    /// <summary>cs1:0xD439 — <c>mov cx,2; jmp 0xD445</c>.</summary>
+    public System.Action DispatchCx2_1000_D439_01D439(int gotoAddress) {
+        CX = 2;
+        return NearJump(0xD445);
+    }
+
+    /// <summary>cs1:0xD43E — <c>mov cx,1; jmp 0xD445</c>.</summary>
+    public System.Action DispatchCx1_1000_D43E_01D43E(int gotoAddress) {
+        CX = 1;
+        return NearJump(0xD445);
+    }
+
+    /// <summary>cs1:0xC43E — <c>mov si,0x1470; jmp 0xC446</c> (the C#
+    /// <see cref="FarBlitTo38ED_1000_C446_01C446"/>).</summary>
+    public System.Action BlitSi1470_1000_C43E_01C43E(int gotoAddress) {
+        SI = 0x1470;
+        return NearJump(0xC446);
+    }
+
+    /// <summary>cs1:0xC443 — <c>mov si,0xD834; jmp 0xC446</c> (the C#
+    /// <see cref="FarBlitTo38ED_1000_C446_01C446"/>).</summary>
+    public System.Action BlitSiD834_1000_C443_01C443(int gotoAddress) {
+        SI = 0xD834;
+        return NearJump(0xC446);
+    }
+
+    /// <summary>cs1:0xC474 — <c>mov si,0x1470; jmp 0xC477</c> (the C#
+    /// <see cref="GfxCopyRectAtSi_1000_C477_01C477"/>).</summary>
+    public System.Action RectCopySi1470_1000_C474_01C474(int gotoAddress) {
+        SI = 0x1470;
+        return NearJump(0xC477);
     }
 
     /// <summary>cs1:0xADED — <c>ax=0x0190; bl=[0x2896]; bh=[0x28AE];
