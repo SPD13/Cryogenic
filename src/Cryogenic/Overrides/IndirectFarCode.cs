@@ -58,6 +58,46 @@ public partial class Overrides {
         DefineFunction(cs1, 0xC30D, LdsVertexFarCall38CD_1000_C30D_01C30D);
         DefineFunction(cs1, 0xC343, LdsVertexFarCall38CDB_1000_C343_01C343);
         DefineFunction(cs1, 0x1A9B, GetPtrThenFarCall38CD_1000_1A9B_011A9B);
+        DefineFunction(cs1, 0xC46F, BlitDc32Variant_1000_C46F_01C46F);
+        DefineFunction(cs1, 0x908C, FarCall38CDIf479E223C_1000_908C_01908C);
+    }
+
+    /// <summary>cs1:0xC46F — <c>ax=[0xDC32]; jmp 0xC449</c> (mid the still-present
+    /// raw-asm FarBlitTo38ED body — variant using [0xDC32] as the source segment
+    /// instead of [0xDBDE]).</summary>
+    public System.Action BlitDc32Variant_1000_C46F_01C46F(int gotoAddress) {
+        AX = UInt16[DS, 0xDC32];
+        return NearJump(0xC449);
+    }
+
+    /// <summary>
+    /// cs1:0x908C — guarded: returns unless <c>[0xD83A] &gt; [0x4782]</c> and
+    /// <c>word[0x479E] == 0x223C</c>; then sets <c>bx=0x92-[0x4793]; dx=0; ch=0xFF;
+    /// di=0x140; si=[0x22FC]; es=[0xDBDA]; bp=0xD834; call far [0x38CD]</c>.
+    /// Continuation = raw asm <c>C3</c> @cs1:0x90BC.
+    /// </summary>
+    public System.Action FarCall38CDIf479E223C_1000_908C_01908C(int gotoAddress) {
+        ushort ax = UInt16[DS, 0xD83A];
+        AX = ax;
+        if (ax <= UInt16[DS, 0x4782]) {                 // cmp ax,[0x4782] ; jbe 90BC
+            return NearRet();
+        }
+        if (UInt16[DS, 0x479E] != 0x223C) {             // cmp word[0x479E],0x223C ; jnz 90BC
+            return NearRet();
+        }
+        ushort cxFull = UInt16[DS, 0x4793];
+        BX = (ushort)(0x0092 - cxFull);                 // bx=0x92 ; sub bx,cx
+        DX = 0;                                          // xor dx,dx
+        CX = (ushort)(0xFF00 | (cxFull & 0x00FF));       // mov ch,0xFF
+        DI = 0x0140;
+        SI = UInt16[DS, 0x22FC];
+        ES = UInt16[DS, 0xDBDA];
+        BP = 0xD834;
+        ushort off = UInt16[DS, 0x38CD];
+        ushort seg = UInt16[DS, 0x38CF];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0x90BC;
+        return FarJump(seg, off);
     }
 
     /// <summary>
