@@ -139,8 +139,8 @@ public partial class Overrides {
         DefineFunction(cs1, 0xF0D6, "read_and_maybe_hsq_ida");
         DefineFunction(cs1, 0xF0F6, "bump_alloc_get_addr_in_di_ida");
         // cs1:0xF0FF bump_allocate_bump_cx_bytes_ida — real C# override in MemoryResourceCode.cs.
-        DefineFunction(cs1, 0xF11C, "alloc_cx_pages_to_di_ida");
-        DefineFunction(cs1, 0xF13F, "allocator_attempt_to_free_space_ida");
+        // cs1:0xF11C alloc_cx_pages_to_di_ida — real C# override in MemoryResourceCode.cs.
+        // cs1:0xF13F allocator_attempt_to_free_space_ida — real C# override in MemoryResourceCode.cs.
         DefineFunction(cs1, 0xF1FB, "open_res_or_file_to_dx_size_ax_ida");
         DefineFunction(cs1, 0xF229, "open_res_or_file_or_die_ida");
         DefineFunction(cs1, 0xF244, "read_resource_to_esdi_ida");
