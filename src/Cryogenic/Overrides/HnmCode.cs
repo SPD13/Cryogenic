@@ -4,6 +4,7 @@ using Spice86.Core.Emulator.OperatingSystem;
 using Spice86.Core.Emulator.OperatingSystem.Structures;
 
 using System;
+using System.IO;
 
 /// <summary>
 /// Partial class containing HNM video file format handling overrides.
@@ -100,7 +101,7 @@ public partial class Overrides {
         uint offset = globalsOnDs.Get1138_DC04_DWord32_hnmFileOffset();
         uint targetMemory = globalsOnDs.GetPtr1138_DC0C_Dword32_hnmFileReadBufferSegment().Linear;
         _loggerService.Debug("Read {@ReadLength} bytes from hnm file handle {@FileHandle} at offset {@Offset}", readLength, fileHandle, offset);
-        dosFileManager.MoveFilePointerUsingHandle(0, fileHandle, (int)offset);
+        dosFileManager.MoveFilePointerUsingHandle(SeekOrigin.Begin, fileHandle, (int)offset);
         DosFileOperationResult result = dosFileManager.ReadFileOrDevice(fileHandle, readLength, targetMemory);
         uint? actualReadLength = result.Value;
         if (actualReadLength != readLength) {

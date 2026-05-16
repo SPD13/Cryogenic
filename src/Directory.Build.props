@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Relaxed for the SPD13 fork: the C# override corpus is a large set of
+         byte-faithful ASM->C# ports (fidelity to the original 8086 takes
+         precedence over C# idiom / tab-formatting), incompatible with the
+         strict analyzer+IDE0055 gate. Analyzers still run as warnings. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <AvaloniaUseCompiledBindingsByDefault>True</AvaloniaUseCompiledBindingsByDefault>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+</Project>

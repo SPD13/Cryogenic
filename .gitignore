@@ -4,6 +4,17 @@
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
 # User-specific files
+dump/
+docs/
+OpenRakis/
+Spice86/
+*5F30AEB84D67CF2E053A83C09C2890F010F2E25EE877EBEC58EA15C5B30CFFF9/
+doc/Dune*/
+doc/dunedemo/
+_buildcheck/
+*.dll
+*.exe
+
 src/Cryogenic/Properties/
 *.rsuser
 *.suo
@@ -366,3 +377,14 @@ Rebuild/**/*.tsbuildinfo
 Rebuild/**/coverage/
 # Output of the asset extractor — derived from copyrighted DUNE.DAT, never committed
 Rebuild/extracted-assets/
+
+# game assets
+dune/*
+!dune/.gitkeep
+mt32rom/*
+!mt32rom/.gitkeep
+assets_override/**
+!assets_override/.gitkeep
+!assets_override/music/
+!assets_override/music/.gitkeep
+!assets_override/music/fingerprints.json
