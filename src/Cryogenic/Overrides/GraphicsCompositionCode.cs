@@ -17,6 +17,103 @@ public partial class Overrides {
     /// <summary>Registers Phase 37 graphics-composition overrides with Spice86.</summary>
     public void DefineGraphicsCompositionCodeOverrides() {
         DefineFunction(cs1, 0xC22F, DrawSprite_1000_C22F_01C22F);
+        DefineFunction(cs1, 0xC2A1, ScratchSpriteDecoder_1000_C2A1_01C2A1);
+    }
+
+    /// <summary>
+    /// Override for cs1:0xC2A1 — the scaled-sprite scratch RLE decoder (Tech/13
+    /// §"bit-15-set scratch decoder"). Decodes the bit7=fill / else=literal RLE
+    /// stream at <c>ds:si</c> into the scratch buffer at <c>ss:0x4C60</c>,
+    /// <c>height</c> rows × <c>bytesPerRow = ((word[0]&amp;0x1FF)+3 &gt;&gt; 2) &lt;&lt; 1</c>
+    /// bytes (1:1 unpacked, not nibble-packed). Returns with <c>ds=ss</c>,
+    /// <c>si=0x4C60</c> (pointing at the decoded scratch); AX/BX/CX/DI/ES/BP restored.
+    /// Pure compute — no driver/disk/indirect deps. Resolves the
+    /// <see cref="DrawSprite_1000_C22F_01C22F"/> scaling path.
+    /// </summary>
+    /// <remarks>
+    /// Asm (81 bytes, cs1:0xC2A1..0xC2F1):
+    /// <code>
+    /// C2A1: 50 53 51 57 06 55   push ax,bx,cx,di,es,bp
+    /// C2A7: 16 07               push ss / pop es        ; es = ss
+    /// C2A9: 8B EF               mov bp,di               ; bp = word[0]
+    /// C2AB: BF 60 4C            mov di,0x4C60           ; dst = ss:0x4C60
+    /// C2AE: 81 E5 FF 01         and bp,0x01FF
+    /// C2B2: 83 C5 03 / D1 ED / D1 ED / D1 E5            ; bp = ((w+3)>>2)<<1 = bpr
+    /// C2BB: 8B 4C FE            mov cx,[si-2]           ; word[1]
+    /// C2BE: 32 ED               xor ch,ch               ; cx = height
+    /// C2C0: 51                  push cx                 ; ROW loop
+    /// C2C1: 8B DD               mov bx,bp               ; bx = bpr (row budget)
+    /// C2C3: AC                  lodsb                   ; opcode
+    /// C2C4: A8 80 / 75 0E       test al,0x80 ; jnz FILL
+    /// C2C8: B1 01 / 02 C8 / 32 ED   cx = al+1 (literal count)
+    /// C2CE: 2B D9               sub bx,cx
+    /// C2D0: F3 A4               rep movsb               ; ds:si -> es:di
+    /// C2D2: 75 EF               jnz C2C3                ; bx!=0 -> next opcode
+    /// C2D4: EB 0D               jmp C2E3
+    /// C2D6: B1 01 / 2A C8 / 32 ED   cx = 1-al (fill count)  [FILL]
+    /// C2DC: 2B D9               sub bx,cx
+    /// C2DE: AC / F3 AA          lodsb (fill) ; rep stosb
+    /// C2E1: 75 E0               jnz C2C3
+    /// C2E3: 59 / E2 DA          pop cx ; loop C2C0       ; rowCount--
+    /// C2E6: BE 60 4C            mov si,0x4C60
+    /// C2E9: 16 1F               push ss / pop ds        ; ds = ss
+    /// C2EB: 5D 07 5F 59 5B 58 C3   pop bp,es,di,cx,bx,ax ; ret
+    /// </code>
+    /// The post-<c>rep</c> <c>jnz</c> tests ZF from the preceding <c>sub bx,cx</c>
+    /// (string ops/REP don't touch flags), i.e. loop while the row budget ≠ 0.
+    /// Forward DF assumed (ambient cld).
+    /// </remarks>
+    public System.Action ScratchSpriteDecoder_1000_C2A1_01C2A1(int gotoAddress) {
+        ushort savedAx = AX, savedBx = BX, savedCx = CX, savedDi = DI, savedEs = ES, savedBp = BP;
+        ES = SS;                                            // push ss ; pop es
+        ushort bp = (ushort)(DI & 0x01FF);                  // mov bp,di ; and bp,0x1FF
+        ushort di = 0x4C60;
+        bp = (ushort)(bp + 3);
+        bp = (ushort)(bp >> 1);
+        bp = (ushort)(bp >> 1);
+        bp = (ushort)(bp << 1);                             // bytesPerRow
+        ushort si = SI;
+        ushort rowCount = (ushort)(UInt16[DS, (ushort)(si - 2)] & 0x00FF);   // cx=[si-2]; xor ch,ch
+        while (true) {
+            ushort bx = bp;                                 // mov bx,bp
+            while (true) {
+                byte al = UInt8[DS, si]; si = (ushort)(si + 1);   // lodsb
+                ushort count;
+                if ((al & 0x80) == 0) {                     // literal
+                    count = (ushort)((al + 1) & 0x00FF);    // cl=1 ; add cl,al ; xor ch,ch
+                    bx = (ushort)(bx - count);              // sub bx,cx
+                    for (int k = 0; k < count; k++) {       // rep movsb
+                        UInt8[ES, di] = UInt8[DS, si];
+                        si = (ushort)(si + 1);
+                        di = (ushort)(di + 1);
+                    }
+                } else {                                     // fill
+                    count = (ushort)((1 - al) & 0x00FF);    // cl=1 ; sub cl,al ; xor ch,ch
+                    bx = (ushort)(bx - count);              // sub bx,cx
+                    byte fill = UInt8[DS, si]; si = (ushort)(si + 1);   // lodsb
+                    for (int k = 0; k < count; k++) {       // rep stosb
+                        UInt8[ES, di] = fill;
+                        di = (ushort)(di + 1);
+                    }
+                }
+                if (bx == 0) {                              // jnz C2C3 (ZF from sub bx,cx)
+                    break;
+                }
+            }
+            rowCount = (ushort)(rowCount - 1);              // pop cx ; loop C2C0
+            if (rowCount == 0) {
+                break;
+            }
+        }
+        SI = 0x4C60;                                        // mov si,0x4C60
+        DS = SS;                                            // push ss ; pop ds (deliberate output)
+        BP = savedBp;
+        ES = savedEs;
+        DI = savedDi;
+        CX = savedCx;
+        BX = savedBx;
+        AX = savedAx;
+        return NearRet();
     }
 
     /// <summary>
