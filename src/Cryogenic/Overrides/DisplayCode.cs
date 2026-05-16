@@ -29,6 +29,204 @@ public partial class Overrides {
         DefineFunction(cs1, 0xD082, SetFontToBook_1ED_D082_EF52);
         DefineFunction(cs1, 0xE270, PushAll_1000_E270_01E270);
         DefineFunction(cs1, 0xE283, PopAll_1000_E283_01E283);
+        DefineFunction(cs1, 0xC0F4, MaybeBlitFrontToScreen_1000_C0F4_01C0F4);
+        DefineFunction(cs1, 0xC446, FarBlitTo38ED_1000_C446_01C446);
+        DefineFunction(cs1, 0xC46B, FarBlitTo38EDContinuation_1000_C46B_01C46B);
+        DefineFunction(cs1, 0xCF4B, IRULxDrawOrClearSubtitle_1000_CF4B_01CF4B);
+    }
+
+    /// <summary>
+    /// Override for cs1:0xCF4B — <c>IRULx_draw_or_clear_subtitle_ida</c>. Records the
+    /// subtitle resource pointer (SI) at <c>ds[0x3622]</c>. If bit 1 of
+    /// <c>(SI − 0x35A8)</c> is set it tail-jumps to the subtitle draw routine at
+    /// <c>cs1:0xC22F</c> (with BX=0x00BE, DX=0); otherwise it zero-fills the
+    /// 0x0B40-word subtitle buffer at <c>[ds:0xDBD8]:0xED80</c> and returns.
+    /// </summary>
+    /// <remarks>
+    /// Asm (two exits, CF4B..CF6F):
+    /// <code>
+    /// CF4B: 8B C6         mov  ax, si
+    /// CF4D: A3 22 36      mov  [0x3622], ax
+    /// CF50: 2D A8 35      sub  ax, 0x35A8
+    /// CF53: D1 E8         shr  ax, 1
+    /// CF55: D1 E8         shr  ax, 1            ; CF = bit1 of (si-0x35A8)
+    /// CF57: 73 08         jnc  CF61
+    /// CF59: BB BE 00      mov  bx, 0x00BE
+    /// CF5C: 33 D2         xor  dx, dx
+    /// CF5E: E9 CE F2      jmp  C22F             ; near tail-jump (draw)
+    /// CF61: BF 80 ED      mov  di, 0xED80
+    /// CF64: 8E 06 D8 DB   mov  es, [0xDBD8]
+    /// CF68: 33 C0         xor  ax, ax
+    /// CF6A: B9 40 0B      mov  cx, 0x0B40
+    /// CF6D: F3 AB         rep  stosw            ; clear buffer (DF=0)
+    /// CF6F: C3            ret
+    /// </code>
+    /// Clean two-exit leaf (no calls/hardware). The <c>jmp C22F</c> is a near
+    /// tail-jump within cs1 — Spice86 dispatches whatever (asm or C#) is registered
+    /// at <c>cs1:0xC22F</c> (see Plans/09 §D). AX holds <c>(si-0x35A8)&gt;&gt;2</c>
+    /// at the tail-jump.
+    /// </remarks>
+    public System.Action IRULxDrawOrClearSubtitle_1000_CF4B_01CF4B(int gotoAddress) {
+        ushort ax = SI;
+        AX = ax;
+        UInt16[DS, 0x3622] = ax;
+        ax = (ushort)(ax - 0x35A8);
+        ax = (ushort)(ax >> 1);
+        bool cf = (ax & 1) != 0;       // bit1 of (si-0x35A8)
+        ax = (ushort)(ax >> 1);
+        AX = ax;
+        if (cf) {
+            BX = 0x00BE;
+            DX = 0;
+            return NearJump(0xC22F);
+        }
+        DI = 0xED80;
+        ES = UInt16[DS, 0xDBD8];
+        AX = 0;
+        ushort cx = 0x0B40;
+        while (cx != 0) {
+            UInt16[ES, DI] = 0;
+            DI = (ushort)(DI + 2);
+            cx--;
+        }
+        CX = 0;
+        return NearRet();
+    }
+
+    /// <summary>
+    /// Override for cs1:0xC446 — clipped blit via indirect-far dispatch through
+    /// <c>ds:[0x38ED]</c>. Reads source rect (4 words) from <c>[SI..SI+6]</c>; if either
+    /// dimension is ≤ 0 (after subtracting offsets) the function returns early.
+    /// </summary>
+    /// <remarks>
+    /// Asm (41 bytes, C446..C46E):
+    /// <code>
+    /// C446: A1 DE DB         mov ax, [0xDBDE]
+    /// C449: 51                push cx
+    /// C44A: 8B C8             mov cx, ax
+    /// C44C: 8B 14             mov dx, [si]
+    /// C44E: 8B 5C 02          mov bx, [si+0x02]
+    /// C451: 8B 6C 04          mov bp, [si+0x04]
+    /// C454: 8B 44 06          mov ax, [si+0x06]
+    /// C457: 2B EA             sub bp, dx
+    /// C459: 76 12              jbe C46D
+    /// C45B: 2B C3              sub ax, bx
+    /// C45D: 76 0E              jbe C46D
+    /// C45F: 8E 06 D6 DB        mov es, [0xDBD6]
+    /// C463: 56                  push si
+    /// C464: 1E                  push ds
+    /// C465: 8B F1               mov si, cx
+    /// C467: FF 1E ED 38         call far [0x38ED]
+    /// C46B: 1F                  pop ds                 ; continuation entry
+    /// C46C: 5E                  pop si
+    /// C46D: 59                  pop cx
+    /// C46E: C3                  ret
+    /// </code>
+    /// </remarks>
+    public Action FarBlitTo38ED_1000_C446_01C446(int gotoAddress) {
+        ushort dbde = UInt16[DS, 0xDBDE];
+        AX = dbde;
+        // push cx
+        SP = (ushort)(SP - 2);
+        UInt16[SS, SP] = CX;
+        CX = dbde;
+
+        ushort origDx = UInt16[DS, SI];
+        DX = origDx;
+        ushort origBx = UInt16[DS, (ushort)(SI + 0x02)];
+        BX = origBx;
+        ushort origBp = UInt16[DS, (ushort)(SI + 0x04)];
+        BP = origBp;
+        ushort origAx = UInt16[DS, (ushort)(SI + 0x06)];
+        AX = origAx;
+
+        // sub bp, dx; jbe C46D
+        BP = (ushort)(BP - DX);
+        if (origBp <= origDx) {
+            // jbe — early exit: pop cx; ret
+            CX = UInt16[SS, SP];
+            SP = (ushort)(SP + 2);
+            return NearRet();
+        }
+        // sub ax, bx; jbe C46D
+        AX = (ushort)(AX - BX);
+        if (origAx <= origBx) {
+            CX = UInt16[SS, SP];
+            SP = (ushort)(SP + 2);
+            return NearRet();
+        }
+        // mov es, [0xDBD6]
+        ES = globalsOnDs.Get1138_DBD6_Word16_framebufferFront();
+        // push si
+        SP = (ushort)(SP - 2);
+        UInt16[SS, SP] = SI;
+        // push ds
+        SP = (ushort)(SP - 2);
+        UInt16[SS, SP] = DS;
+        // mov si, cx
+        SI = CX;
+        // call far [0x38ED]
+        ushort targetOff = UInt16[DS, 0x38ED];
+        ushort targetSeg = UInt16[DS, 0x38EF];
+        // Far call: push CS, push IP (0xC46B continuation)
+        SP = (ushort)(SP - 2);
+        UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2);
+        UInt16[SS, SP] = 0xC46B;
+        return FarJump(targetSeg, targetOff);
+    }
+
+    /// <summary>
+    /// Override for cs1:0xC46B — continuation of <see cref="FarBlitTo38ED_1000_C446_01C446"/>
+    /// after the far-call returns.
+    /// </summary>
+    public Action FarBlitTo38EDContinuation_1000_C46B_01C46B(int gotoAddress) {
+        // pop ds, pop si, pop cx, ret
+        DS = UInt16[SS, SP];
+        SP = (ushort)(SP + 2);
+        SI = UInt16[SS, SP];
+        SP = (ushort)(SP + 2);
+        CX = UInt16[SS, SP];
+        SP = (ushort)(SP + 2);
+        return NearRet();
+    }
+
+    /// <summary>
+    /// Override for cs1:0xC0F4 — when the front buffer differs from the screen buffer,
+    /// dispatches via the function-pointer slot at <c>ds:[0x3935]</c> (typically the
+    /// front-to-screen blit). Otherwise returns immediately.
+    /// </summary>
+    /// <remarks>
+    /// Asm (14 bytes):
+    /// <code>
+    /// C0F4: A1 D6 DB         mov ax, [0xDBD6]
+    /// C0F7: 3B 06 D8 DB      cmp ax, [0xDBD8]
+    /// C0FB: 74 04             jz  C101
+    /// C0FD: FF 1E 35 39       call far [0x3935]
+    /// C101: C3                ret
+    /// </code>
+    /// The indirect <c>call far [DS:0x3935]</c> is simulated by reading the 4-byte
+    /// far pointer at <c>ds:0x3935</c>, pushing <c>cs1:0xC101</c> (the bare-near-ret byte
+    /// at the function tail) as the far-return address, and issuing <c>FarJump</c>. When
+    /// the dispatched function does <c>retf</c>, control lands on the asm <c>C3</c> at
+    /// <c>0xC101</c> which pops the outer caller's near return.
+    /// </remarks>
+    public Action MaybeBlitFrontToScreen_1000_C0F4_01C0F4(int gotoAddress) {
+        ushort a = globalsOnDs.Get1138_DBD6_Word16_framebufferFront();
+        ushort b = globalsOnDs.Get1138_DBD8_Word16_screenBuffer();
+        AX = a;
+        if (a == b) {
+            return NearRet();
+        }
+        // call far [0x3935] — read 4-byte far ptr at DS:0x3935
+        ushort targetOff = UInt16[DS, 0x3935];
+        ushort targetSeg = UInt16[DS, 0x3937];
+        // Simulate far call: push CS, push IP (0xC101 — the bare-ret byte)
+        SP = (ushort)(SP - 2);
+        UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2);
+        UInt16[SS, SP] = 0xC101;
+        return FarJump(targetSeg, targetOff);
     }
 
     public Action ClearCurrentVideoBuffer_1000_C0AD_01C0AD(int gotoAddress) {

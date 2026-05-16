@@ -358,3 +358,11 @@ MigrationBackup/
 
 #GDB
 .gdb_history
+
+# JS rebuild (Rebuild/) — derived artifacts
+Rebuild/**/node_modules/
+Rebuild/**/dist/
+Rebuild/**/*.tsbuildinfo
+Rebuild/**/coverage/
+# Output of the asset extractor — derived from copyrighted DUNE.DAT, never committed
+Rebuild/extracted-assets/

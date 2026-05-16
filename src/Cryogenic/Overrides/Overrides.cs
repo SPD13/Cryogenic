@@ -119,6 +119,13 @@ public partial class Overrides : CSharpOverrideHelper {
         DefineMapCodeOverrides();
         DefineMenuCodeOverrides();
         DefineScriptedSceneCodeOverrides();
+        DefineScriptVmCodeOverrides();
+        DefineOuterVmHelpersCodeOverrides();
+        DefineOuterVmCodeOverrides();
+        DefineInputCodeOverrides();
+        DefineSceneChainCodeOverrides();
+        DefineAudioCodeOverrides();
+        DefineMemoryResourceCodeOverrides();
         DefineTimeCodeOverrides();
         DefineTimerCodeOverrides();
         DefineUnknownCodeOverrides();
