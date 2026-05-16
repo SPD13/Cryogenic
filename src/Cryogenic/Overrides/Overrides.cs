@@ -160,6 +160,7 @@ public partial class Overrides : CSharpOverrideHelper {
 		DefineInputCodeOverrides();
 		DefineAudioCodeOverrides();
 		DefineMemoryResourceCodeOverrides();
+		DefineIndirectFarCodeOverrides();
 
 		DefineDriversRemapping();
 		DetectDriversEntryPoints();

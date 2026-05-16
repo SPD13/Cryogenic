@@ -40,7 +40,7 @@ public partial class Overrides {
         DefineFunction(cs1, 0x2D74, "open_SAL_resource_ida");
         DefineFunction(cs1, 0x3B59, "draw_SAL_ida");
         DefineFunction(cs1, 0x3BE9, "SAL_polygon_ida");
-        DefineFunction(cs1, 0x3D83, "do_weird_shit_with_stack_buffer_ida");
+        // cs1:0x3D83 — real C# override in UnknownCode.cs (DoWeirdStackBuffer).
         // cs1:0x55DD map_func_ida — real C# override in MapCode.cs (ScanSpriteSheetClearBit4).
         // cs1:0x5E4F calc_SAL_index_ida — real C# override in MapCode.cs (CalcSalIndex).
         DefineFunction(cs1, 0x63F0, "map_func_qq_ida");
@@ -68,9 +68,9 @@ public partial class Overrides {
         DefineFunction(cs1, 0xC1BA, "hnm_apply_palette_ida");
         DefineFunction(cs1, 0xC22F, "draw_sprite_ida");
         DefineFunction(cs1, 0xC477, "gfx_copy_rect_at_si_ida");
-        DefineFunction(cs1, 0xC49A, "gfx_copy_framebuffer_to_screen_ida");
+        // cs1:0xC49A — real C# override in IndirectFarCode.cs (GfxCopyFramebufferToScreen).
         DefineFunction(cs1, 0xC4AA, "gfx_copy_rect_to_screen_ida");
-        DefineFunction(cs1, 0xC4CD, "gfx_copy_framebuf_to_screen_ida");
+        // cs1:0xC4CD — real C# override in IndirectFarCode.cs (GfxCopyFramebufToScreen).
         DefineFunction(cs1, 0xC4F0, "rect_at_si_to_regs_ida");
         DefineFunction(cs1, 0xC92B, "hnm_reset_and_read_header_ida");
         DefineFunction(cs1, 0xC93C, "hnm_read_header_ida");
@@ -83,7 +83,7 @@ public partial class Overrides {
         // harness can short-circuit it under CRYO_HARNESS_FAST_HNM.
         // cs1:0xCA60 hnm_do_frame_ida — see VideoCode.cs (harness stub).
         DefineFunction(cs1, 0xCC96, "hnm_decode_video_frame_ida");
-        DefineFunction(cs1, 0xCD8F, "hnm_read_header_size_ida");
+        // cs1:0xCD8F — real C# override in HnmCode.cs (HnmReadHeaderSize).
         DefineFunction(cs1, 0xCDA0, "hnm_prepare_header_read_ida");
         // cs1:0xCE1A hnm_reset_ida — real C# override in HnmCode.cs (HnmReset).
         DefineFunction(cs1, 0xCE3B, "hnm_handle_pal_chunk_ida");
@@ -96,7 +96,7 @@ public partial class Overrides {
         //DefineFunction(segment, 0xDAE3, "set_mouse_pos_ida");
         DefineFunction(cs1, 0xDB14, "define_mouse_range_ida");
         // cs1:0xDB4C — real C# override in InputCode.cs (MouseStuff).
-        DefineFunction(cs1, 0xDBB2, "call_restore_cursor_ida");
+        // cs1:0xDBB2 — real C# override in IndirectFarCode.cs (CallRestoreCursor).
         DefineFunction(cs1, 0xDBEC, "draw_mouse_ida");
         DefineFunction(cs1, 0xDC20, "redraw_mouse_ida");
         DefineFunction(cs1, 0xDCE0, "read_game_port_ida");
@@ -119,8 +119,8 @@ public partial class Overrides {
         DefineFunction(cs1, 0xEA32, "initialize_joystick_ida");
         DefineFunction(cs1, 0xEA7B, "memory_func_qq_ida");
         DefineFunction(cs1, 0xEAB7, "memory_func_qq_ida");
-        DefineFunction(cs1, 0xEC46, "call_memory_func_2_ida");
-        DefineFunction(cs1, 0xEC59, "call_memory_func_1_ida");
+        // cs1:0xEC46 — real C# override in IndirectFarCode.cs (CallMemoryFunc2).
+        // cs1:0xEC59 — real C# override in IndirectFarCode.cs (CallMemoryFunc1).
         DefineFunction(cs1, 0xEC9C, "xms_memory_func_1_ida");
         DefineFunction(cs1, 0xECEC, "xms_memory_func_1_ida");
         DefineFunction(cs1, 0xED40, "get_ems_emm_handle_ida");
@@ -129,7 +129,7 @@ public partial class Overrides {
         DefineFunction(cs1, 0xEE02, "ems_memory_func_2_ida");
         DefineFunction(cs1, 0xEE46, "ems_memory_func_1_ida");
         DefineFunction(cs1, 0xEEA0, "initialize_himem_sys_ida");
-        DefineFunction(cs1, 0xEF22, "call_xms_driver_func_ida");
+        // cs1:0xEF22 — real C# override in IndirectFarCode.cs (CallXmsDriverFunc).
         DefineFunction(cs1, 0xEF2B, "call_xms_func_on_block_ida");
         DefineFunction(cs1, 0xEF32, "xms_move_memory_ida");
         DefineFunction(cs1, 0xF05C, "reset_keyboard_ida");

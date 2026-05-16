@@ -28,6 +28,38 @@ public partial class Overrides {
     public void DefineHnmCodeOverrides() {
         DefineFunction(cs1, 0xCDBF, HnmReadFromFileHandle_1000_CDBF_01CDBF);
         DefineFunction(cs1, 0xCE1A, HnmReset_1000_CE1A_01CE1A);
+        DefineFunction(cs1, 0xCD8F, HnmReadHeaderSize_1000_CD8F_01CD8F);
+    }
+
+    /// <summary>
+    /// Override for cs1:0xCD8F — <c>hnm_read_header_size_ida</c>. Reads the 2-byte HNM
+    /// header size into the decode buffer via
+    /// <see cref="HnmReadFromFileHandle_1000_CDBF_01CDBF"/> (CX=2), then returns
+    /// <c>AX = es:[si-2]</c> (the word just read) where <c>es:si</c> comes from the far
+    /// pointer at <c>ds:[0xDC0C]</c>.
+    /// </summary>
+    /// <remarks>
+    /// Asm (17 bytes):
+    /// <code>
+    /// CD8F: B9 02 00      mov cx, 0x0002
+    /// CD92: E8 2A 00      call CDBF            ; HnmReadFromFileHandle
+    /// CD95: 72 08         jc  CD9F             ; (error path)
+    /// CD97: C4 36 0C DC   les si, [0xDC0C]
+    /// CD9B: 26 8B 44 FE   mov ax, es:[si-2]
+    /// CD9F: C3            ret
+    /// </code>
+    /// The only call is the already-ported C# <c>0xCDBF</c>, which models
+    /// "read succeeds or throws" (no CF-error return), so the asm <c>jc</c> error path
+    /// is unreachable in the C# model and the success path is taken unconditionally.
+    /// </remarks>
+    public Action HnmReadHeaderSize_1000_CD8F_01CD8F(int gotoAddress) {
+        CX = 0x0002;
+        HnmReadFromFileHandle_1000_CDBF_01CDBF(0);
+        ushort si = UInt16[DS, 0xDC0C];
+        ES = UInt16[DS, 0xDC0E];
+        SI = si;
+        AX = UInt16[ES, (ushort)(si - 2)];
+        return NearRet();
     }
 
     /// <summary>
