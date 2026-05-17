@@ -26,6 +26,7 @@ public partial class Overrides {
         DefineFunction(cs1, 0xE9F4, MouseFuncUncalled_1000_E9F4_01E9F4);
         DefineFunction(cs1, 0xDB67, MouseRedrawGuard_1000_DB67_01DB67);
         DefineFunction(cs1, 0xDB74, MouseBboxHitTest_1000_DB74_01DB74);
+        DefineFunction(cs1, 0xDBEC, DrawMouse_1000_DBEC_01DBEC);
     }
 
     /// <summary>
@@ -120,6 +121,59 @@ public partial class Overrides {
         UInt16[SS, SP] = cs1;                         // push CS
         SP = (ushort)(SP - 2);
         UInt16[SS, SP] = 0xDBC8;                      // push continuation IP (asm pop ax;ret)
+        return FarJump(seg, off);
+    }
+
+    /// <summary>
+    /// Override for cs1:0xDBEC — <c>draw_mouse_ida</c> (<c>sub_FABC</c>,
+    /// <c>DNCDPRG.ASM:33489</c>). Bumps the cursor hide-counter at
+    /// <c>[0xDC46]</c>; only on the −1→0 transition (counter becomes exactly
+    /// 0) does it stage the cursor coordinates and dispatch the VGA driver's
+    /// draw-cursor handler via the indirect far pointer at <c>ds:[0x38C1]</c>
+    /// (§A FarJump pattern; continuation = the raw-asm 7-register
+    /// <c>pop</c>/<c>ret</c> at <c>cs1:0xDC13</c>).
+    /// </summary>
+    /// <remarks>
+    /// <code>
+    /// DBEC: inc byte [0xDC46] ; js DC1A(ret) ; jnz DC1B
+    /// DBF4: push ax,bx,cx,dx,si,di,bp
+    /// DBFB: dx=[0xDC36] ; bx=[0xDC38] ; [0xDC42]=dx ; [0xDC44]=bx ; si=[0x2582]
+    /// DC0F: call far [0x38C1]
+    /// DC13: pop bp,di,si,dx,cx,bx,ax ; DC1A: ret
+    /// DC1B: dec byte [0xDC46] ; ret
+    /// </code>
+    /// <c>inc</c> sets SF/ZF (not CF): old 0xFF→0 draws; old 0x00→1 takes the
+    /// <c>jnz</c> no-op (dec back); negative result takes <c>js</c> (leave).
+    /// </remarks>
+    public Action DrawMouse_1000_DBEC_01DBEC(int gotoAddress) {
+        byte nv = (byte)(UInt8[DS, 0xDC46] + 1);          // inc byte [0xDC46]
+        UInt8[DS, 0xDC46] = nv;
+        if ((nv & 0x80) != 0) {                            // js locret_FAEA
+            return NearRet();
+        }
+        if (nv != 0) {                                     // jnz loc_FAEB
+            UInt8[DS, 0xDC46] = (byte)(nv - 1);            // dec byte [0xDC46]
+            return NearRet();
+        }
+        // nv == 0 — draw path. push ax,bx,cx,dx,si,di,bp (continuation @0xDC13 pops them)
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = AX;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = BX;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = CX;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = DX;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = SI;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = DI;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = BP;
+        ushort dxv = UInt16[DS, 0xDC36];                   // mov dx,[0xDC36]
+        ushort bxv = UInt16[DS, 0xDC38];                   // mov bx,[0xDC38]
+        DX = dxv;
+        BX = bxv;
+        UInt16[DS, 0xDC42] = dxv;                          // mov [0xDC42],dx
+        UInt16[DS, 0xDC44] = bxv;                          // mov [0xDC44],bx
+        SI = UInt16[DS, 0x2582];                           // mov si,[0x2582]
+        ushort off = UInt16[DS, 0x38C1];                   // call far [0x38C1]
+        ushort seg = UInt16[DS, 0x38C3];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = cs1;       // push CS
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0xDC13;    // push continuation IP
         return FarJump(seg, off);
     }
 
