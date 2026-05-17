@@ -198,6 +198,7 @@ public static class HarnessCli {
         "snapshot" or "snapshot-on-checkpoint" => HarnessMode.SnapshotOnCheckpoint,
         "invoke" => HarnessMode.Invoke,
         "trace" => HarnessMode.Trace,
+        "driver-dump" or "driverdump" => HarnessMode.DriverDump,
         _ => throw new ArgumentException($"unknown harness mode '{s}'"),
     };
 
