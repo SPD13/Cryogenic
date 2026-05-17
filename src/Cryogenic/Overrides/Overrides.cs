@@ -74,6 +74,13 @@ public partial class Overrides : CSharpOverrideHelper {
 	private MusicFolderPlayer? _musicFolderPlayer;
 
 	/// <summary>
+	/// Managed DOS-fs shim owning the host DUNE.DAT. When
+	/// <see cref="DuneDatService.IsAvailable"/> the resource-layer seek/read
+	/// leaves are served from C#; otherwise they stay on emulated DOS.
+	/// </summary>
+	private DuneDatService _duneDat = null!;
+
+	/// <summary>
 	/// Initializes the override system and registers all function replacements and hooks.
 	/// </summary>
 	/// <param name="functionInformations">Dictionary to populate with function override mappings.</param>
@@ -96,6 +103,10 @@ public partial class Overrides : CSharpOverrideHelper {
 		this.cs5 = DriverLoadToolbox.INTERRUPT_HANDLER_SEGMENT;
 		globalsOnDs = new ExtraGlobalsOnDs(machine.Memory, machine.CpuState.SegmentRegisters);
 		globalsOnCsSegment0X2538 = new ExtraGlobalsOnCsSegment0x2538(machine.Memory, cs2);
+
+		// Construct the DUNE.DAT shim before DefineOverrides so the resource-layer
+		// seek/read leaves can be registered conditionally on its availability.
+		_duneDat = new DuneDatService(configuration);
 
 		// Must run before DefineOverrides so DefineMT32DriverCodeOverrides sees the correct flag.
 		DetectMt32DriverEnabled();

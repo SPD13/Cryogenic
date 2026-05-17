@@ -19,6 +19,16 @@ public partial class Overrides {
         DefineFunction(cs1, 0xF11C, AllocCxPagesToDi_1000_F11C_01F11C);
         DefineFunction(cs1, 0xF13F, AllocatorAttemptToFreeSpace_1000_F13F_01F13F);
         DefineFunction(cs1, 0xF403, HsqDecompressDsSiToEsDi_1000_F403_01F403);
+        // DUNE.DAT I/O leaves: serve from the managed shim only when the host
+        // archive was located+validated; otherwise leave the asm (emulated-DOS
+        // INT 21) path in place so a working game is never regressed.
+        if (_duneDat.IsAvailable) {
+            DefineFunction(cs1, 0xF2D6, DuneDatSeek_1000_F2D6_01F2D6);
+            DefineFunction(cs1, 0xF2EA, DuneDatRead_1000_F2EA_01F2EA);
+        } else {
+            DefineFunction(cs1, 0xF2D6, "seek_dune_dat_offset_dxax_ida");
+            DefineFunction(cs1, 0xF2EA, "read_dune_dat_cx_to_esdi_ida");
+        }
     }
 
     /// <summary>
@@ -448,5 +458,68 @@ public partial class Overrides {
             si = restoreSi;                        // mov si,ax (input si unchanged)
             // jmp loc_11305
         }
+    }
+
+    /// <summary>
+    /// Override for cs1:0xF2D6 — <c>seek_dune_dat_offset_dxax_ida</c>
+    /// (<c>DNCDPRG.ASM sub_111A6</c>): DOS LSEEK (INT&#160;21 AX=4200) to the
+    /// absolute DUNE.DAT offset in <c>DX:AX</c>. Served by the managed shim
+    /// (<see cref="DuneDatService"/>) instead of emulated DOS.
+    /// </summary>
+    /// <remarks>
+    /// Asm (cs1:0xF2D6..0xF2E6):
+    /// <code>
+    /// push cx
+    /// mov bx, ss:[0xDBBA]      ; file handle (singleton — ignored by the shim)
+    /// mov cx, dx              ; cx = offset hi
+    /// mov dx, ax              ; dx = offset lo
+    /// mov ax, 4200h
+    /// int 21h                ; DX:AX = resulting absolute position
+    /// pop cx                 ; CX restored
+    /// retn
+    /// </code>
+    /// The asm clobbers BX (= handle) and returns the new position in DX:AX;
+    /// CX is preserved by the push/pop. Success ⇒ CF=0.
+    /// </remarks>
+    public System.Action DuneDatSeek_1000_F2D6_01F2D6(int gotoAddress) {
+        uint offset = ((uint)DX << 16) | AX;
+        uint pos = _duneDat.Seek(offset);
+        BX = UInt16[SS, 0xDBBA];                    // mov bx, ss:[0xDBBA]
+        DX = (ushort)(pos >> 16);                   // INT 21 4200 -> DX:AX = new pos
+        AX = (ushort)(pos & 0xFFFF);
+        CarryFlag = false;                          // success
+        return NearRet();
+    }
+
+    /// <summary>
+    /// Override for cs1:0xF2EA — <c>read_dune_dat_cx_to_esdi_ida</c>
+    /// (<c>DNCDPRG.ASM sub_111BA</c>): DOS read-with-handle (INT&#160;21 AH=3F)
+    /// of <c>CX</c> bytes into <c>ES:DI</c>, then <c>cmp ax,cx</c>. Served by
+    /// the managed shim.
+    /// </summary>
+    /// <remarks>
+    /// Asm (cs1:0xF2EA..0xF2FB):
+    /// <code>
+    /// push ds ; push es ; pop ds   ; ds = es
+    /// mov bx, ss:[0xDBBA]          ; handle
+    /// mov dx, di                   ; ds:dx = es:di buffer
+    /// mov ah, 3Fh
+    /// int 21h                      ; ax = bytes read
+    /// cmp ax, cx                   ; CF=1 iff short read (ax&lt;cx); ZF iff exact
+    /// pop ds                       ; ds restored
+    /// retn
+    /// </code>
+    /// DS is net-unchanged (push ds … pop ds). The asm clobbers BX (= handle)
+    /// and DX (= di). The trailing <c>cmp ax,cx</c> sets the flags the callers
+    /// branch on, so the INT&#160;21 CF is irrelevant.
+    /// </remarks>
+    public System.Action DuneDatRead_1000_F2EA_01F2EA(int gotoAddress) {
+        uint dest = MemoryUtils.ToPhysicalAddress(ES, DI);
+        int n = _duneDat.ReadInto(Memory, dest, CX);
+        BX = UInt16[SS, 0xDBBA];                    // mov bx, ss:[0xDBBA]
+        DX = DI;                                    // mov dx, di
+        AX = (ushort)n;                             // ax = bytes read
+        Alu16.Sub(AX, CX);                          // cmp ax,cx (sets CF/ZF/SF/OF/AF/PF)
+        return NearRet();
     }
 }
