@@ -20,8 +20,82 @@ namespace Cryogenic.Overrides;
 public partial class Overrides {
     /// <summary>Registers the Phase 38 save/load codec overrides.</summary>
     public void DefineSaveLoadCodeOverrides() {
+        DefineFunction(cs1, 0xB473, ApplySavegameMapOverlay_1000_B473_01B473);
         DefineFunction(cs1, 0xB4BB, SaveRleDecode_1000_B4BB_01B4BB);
         DefineFunction(cs1, 0xB4EA, SaveRleEncode_1000_B4EA_01B4EA);
+    }
+
+    /// <summary>
+    /// Override for cs1:0xB473 — the load-side savegame map-flag overlay
+    /// applier (<c>DNCDPRG_RECENT.ASM sub_1B473</c>; Tech/30 §"Save-game flag
+    /// overlay"). Counterpart of the save-side expander <c>cs1:0xB427</c>:
+    /// reads the decompressed <c>.SAV</c> stream at <c>DS:SI</c> and overwrites
+    /// bits 4–5 of every MAP cell with 2 bits per cell from the stream, then
+    /// restores the three fixed state blocks. Pure compute.
+    /// </summary>
+    /// <remarks>
+    /// Asm (cs1:0xB473..0xB4BA), cross-verified against the cs1 dump:
+    /// <code>
+    /// ss: mov es,[0xDD00]            ; ES = MAP resource segment
+    /// xor di,di ; mov bx,0xC5FC ; shr bx,1 ; shr bx,1   ; bx = 0x317F groups
+    /// loc_1B481: lodsb ; mov cx,4 ; mov ah,al ; ror ah,1 ; ror ah,1
+    /// loc_1B48B: mov al,es:[di] ; xor al,ah ; and al,0xCF ; xor al,ah
+    ///            stosb ; rol ah,1 ; rol ah,1 ; loop loc_1B48B
+    ///            dec bx ; jnz loc_1B481
+    /// push cs ; pop es ; mov di,0x00AA ; mov cx,0x00A2 ; rep movsb   ; -> cs1:0xAA
+    /// push ss ; pop es ; mov di,0xAA76 ; mov cx,0x11F8 ; rep movsb   ; -> ss:0xAA76
+    /// mov di,0 ; mov cx,0x1261 ; rep movsb                           ; -> ss:0
+    /// retn
+    /// </code>
+    /// <c>((x^ah)&amp;0xCF)^ah</c> leaves the <c>0xCF</c> bits as <c>x</c>
+    /// (the <c>ah</c> cancels) and forces bits 4–5 to <c>ah</c>'s — i.e. it
+    /// patches only the 2 terrain-flag bits per cell, cycling the source
+    /// byte's bit-pairs across 4 cells via the <c>ror2</c>/<c>rol2</c>. The
+    /// three trailing copies mirror the <c>0xB427</c> expander's three blocks
+    /// (cs1:0xAA ×0xA2, ss:0xAA76 ×0x11F8, ss:0 ×0x1261). Ambient CLD.
+    /// </remarks>
+    public System.Action ApplySavegameMapOverlay_1000_B473_01B473(int gotoAddress) {
+        ushort ds = DS;
+        ushort ss = SS;
+        ushort mapSeg = UInt16[ss, 0xDD00];               // ss: mov es,[0xDD00]
+        ushort si = SI;
+        ushort di = 0;                                     // xor di,di
+        ushort bx = 0xC5FC >> 2;                           // mov bx,0xC5FC ; shr bx,1 (x2) = 0x317F
+        byte al = 0, ah = 0;
+        while (bx != 0) {                                  // loc_1B481 ; dec bx ; jnz
+            al = UInt8[ds, si]; si = (ushort)(si + 1);     // lodsb
+            ah = al;                                        // mov ah,al
+            ah = (byte)(((ah & 0x03) << 6) | (ah >> 2));   // ror ah,1 ; ror ah,1
+            for (int c = 0; c < 4; c++) {                  // mov cx,4 ; loop loc_1B48B
+                byte x = UInt8[mapSeg, di];                 // mov al,es:[di]
+                al = (byte)(((x ^ ah) & 0xCF) ^ ah);       // xor al,ah ; and al,0xCF ; xor al,ah
+                UInt8[mapSeg, di] = al; di = (ushort)(di + 1);  // stosb
+                ah = (byte)(((ah << 2) | (ah >> 6)) & 0xFF);    // rol ah,1 ; rol ah,1
+            }
+            bx = (ushort)(bx - 1);
+        }
+        // push cs ; pop es ; mov di,0xAA ; mov cx,0xA2 ; rep movsb
+        di = 0x00AA;
+        for (int k = 0; k < 0xA2; k++) {
+            UInt8[cs1, di] = UInt8[ds, si]; di = (ushort)(di + 1); si = (ushort)(si + 1);
+        }
+        // push ss ; pop es ; mov di,0xAA76 ; mov cx,0x11F8 ; rep movsb
+        di = 0xAA76;
+        for (int k = 0; k < 0x11F8; k++) {
+            UInt8[ss, di] = UInt8[ds, si]; di = (ushort)(di + 1); si = (ushort)(si + 1);
+        }
+        // mov di,0 ; mov cx,0x1261 ; rep movsb
+        di = 0;
+        for (int k = 0; k < 0x1261; k++) {
+            UInt8[ss, di] = UInt8[ds, si]; di = (ushort)(di + 1); si = (ushort)(si + 1);
+        }
+        ES = ss;                                           // last: push ss ; pop es
+        DI = 0x1261;                                       // di after the final rep movsb
+        SI = si;
+        BX = 0;
+        CX = 0;
+        AX = (ushort)((ah << 8) | al);
+        return NearRet();
     }
 
     /// <summary>
