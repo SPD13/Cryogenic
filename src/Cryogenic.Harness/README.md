@@ -59,6 +59,32 @@ The snapshot at `1000:000C` matches the post-driver-load checkpoint that
 the existing `DefineMemoryDumpsMapping` hook captures, so other tooling
 that targets that address can consume our `ram.bin`.
 
+### Driver-inclusive dump (Phase 40 enablement — Tech/57)
+
+`--mode driver-dump` does a full boot (so init runs the
+`cs1:0xE57B..0xE593` driver-load sequence; the project's `cs1:0xE593`
+per-driver-load-pass hook emits
+`spice86dumpMemoryDump_1000_E593_After_driver_load_pass_N.bin`), then
+**self-verifies** the driver runtime segments (`DNVGA@0xD000`,
+`DNPCS2@0xE000`, `DNMID@0xF000`) are non-zero and prints a
+`DRIVER-DUMP PASS/FAIL` verdict plus the per-pass dump list.
+
+```sh
+dotnet run -- \
+  --mode driver-dump \
+  --skip-intro \
+  --checkpoint 1000:000C \
+  --snapshot-out /tmp/dune-driverdump \
+  --Exe ~/claude-workspace/Cryogenic/DNCDPRG.EXE \
+  -p 4096 -a "ADL220 SBP2227"
+```
+
+A `PASS` means the per-pass `..._E593_..._pass_N.bin` files hold real
+driver machine code (`0xD0000`/`0xE0000`/`0xF0000` non-zero) and
+Phase-40 static RE can proceed from them. A `FAIL` means the drivers
+were shadowed by C# overrides or the driver-load path wasn't reached —
+re-run a full boot with the real driver binaries.
+
 ## Flags
 
 ### Harness flags
@@ -68,7 +94,7 @@ that targets that address can consume our `ram.bin`.
 | `--checkpoint SEG:OFF`  | `1000:000C`          | Address at which to capture state.     |
 | `--snapshot-out DIR`    | `./snapshots/default`| Output directory.                      |
 | `--no-exit`             | (off)                | Keep emulating after the snapshot.     |
-| `--mode NAME`           | `snapshot`           | Reserved for future modes.             |
+| `--mode NAME`           | `snapshot`           | `snapshot` \| `invoke` \| `trace` \| `driver-dump` (see above). |
 | `--watch-mem LINEAR`    | (off)                | Log every memory write to LINEAR (or `LINEAR..LINEAR` range) as ndjson. Repeatable. |
 | `-h`, `--help`          | —                    | Show help.                             |
 
