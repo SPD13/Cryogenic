@@ -119,6 +119,21 @@ public sealed class HarnessOptions {
     /// transitions; set to -1 to inject forever (debug only).
     /// </summary>
     public int SkipIntroStopAtSceneId { get; set; } = 0;
+
+    /// <summary>
+    /// Boot-flow trace investigation (Tech/57). Installs checkpoint-independent
+    /// first-hit, cycle-stamped probes (armed at emulation start, not gated on
+    /// the checkpoint) on the boot/driver-load addresses, and a cycle cap on
+    /// the constantly-hit intro poll sites so the run prints an ordered
+    /// timeline and exits even if the engine spins in the boot intro. Answers
+    /// "where does driver-load (cs1:0xE57B..0xE593 / 0xE675) sit relative to
+    /// the cs1:0x000C checkpoint and the cs1:0x580 intro, and is it reached at
+    /// all?". Read-only diagnostics — no emulation-behaviour change.
+    /// </summary>
+    public bool BootProbe { get; set; } = false;
+
+    /// <summary>Cycle at which the boot-probe forces a summary + exit (default 60M — past the ~26M where the intro spin begins).</summary>
+    public ulong BootProbeCycleCap { get; set; } = 60_000_000;
 }
 
 public enum HarnessMode {

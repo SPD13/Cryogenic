@@ -33,6 +33,12 @@ public sealed class HarnessHelper : CSharpOverrideHelper {
     private FunctionEntryTrace? _fnTrace;
     private long _maxCyclesCap;
 
+    // Boot-flow probe (Tech/57): checkpoint-independent first-hit timeline.
+    private readonly List<(ushort Off, string Label)> _bootProbeAddrs = new();
+    private readonly Dictionary<ushort, long> _bootProbeFirst = new();
+    private readonly Dictionary<ushort, long> _bootProbeHits = new();
+    private bool _bootProbeSummarized;
+
     public HarnessHelper(
         IDictionary<SegmentedAddress, FunctionInformation> functionInformations,
         Machine machine,
@@ -61,6 +67,10 @@ public sealed class HarnessHelper : CSharpOverrideHelper {
 
         if (_options.SkipIntroViaEsc) {
             InstallIntroSkipHook();
+        }
+
+        if (_options.BootProbe) {
+            InstallBootProbe();
         }
 
         // Harness-fwd diagnostic hooks. Passive — these run on top of
@@ -211,7 +221,78 @@ public sealed class HarnessHelper : CSharpOverrideHelper {
         Console.Error.WriteLine($"[harness] function-entry traces armed: {installed}/{addrs.Length}");
     }
 
+    /// <summary>
+    /// Tech/57 boot-flow trace. First-hit, cycle-stamped probes on the
+    /// boot/driver-load path, armed at emulation start (NOT gated on the
+    /// checkpoint, which the prior run never reached). A cycle cap on the
+    /// constantly-hit intro poll sites (cs1:0xDE54 Esc consumer, cs1:0x0580
+    /// play_intro) forces an ordered-timeline summary + exit even when the
+    /// engine spins in the boot intro. Read-only — no behaviour change.
+    /// </summary>
+    private void InstallBootProbe() {
+        _bootProbeAddrs.AddRange(new (ushort, string)[] {
+            (0x000C, "checkpoint / post-driver-load entry"),
+            (0x000D, "call play_intro (instr after 0x000C)"),
+            (0xE675, "open_dune_dat (DUNE.DAT/driver open orchestrator)"),
+            (0xF1FB, "subLoadSavegame (resolve+open+size)"),
+            (0xF20D, "dnmaj-open INT21 return site (driver-file probe)"),
+            (0xE57B, "driver-load: RemapDrivers hook point"),
+            (0xE589, "driver-load: ReadDriverFunctionTable"),
+            (0xE593, "driver-load: ResetAllocator / ret (dump hook)"),
+            (0x0580, "play_intro (boot intro VM)"),
+            (0x08F0, "main game loop entry"),
+        });
+        foreach ((ushort off, string label) in _bootProbeAddrs) {
+            _bootProbeFirst[off] = -1;
+            _bootProbeHits[off] = 0;
+            ushort capturedOff = off;
+            string capturedLabel = label;
+            DoOnTopOfInstruction(0x1000, capturedOff, () => {
+                _bootProbeHits[capturedOff]++;
+                if (_bootProbeFirst[capturedOff] < 0) {
+                    _bootProbeFirst[capturedOff] = State.Cycles;
+                    Console.Error.WriteLine(
+                        $"[bootprobe] FIRST cs1:0x{capturedOff:X4} {capturedLabel} " +
+                        $"cycles={State.Cycles} (ax={State.AX:X4} bx={State.BX:X4} " +
+                        $"si={State.SI:X4} ds={State.DS:X4} es={State.ES:X4})");
+                }
+                MaybeBootProbeCap();
+            });
+        }
+        Console.Error.WriteLine(
+            $"[bootprobe] armed {_bootProbeAddrs.Count} boot-flow probes (cycle cap={_options.BootProbeCycleCap})");
+    }
+
+    private void MaybeBootProbeCap() {
+        if (_bootProbeSummarized) {
+            return;
+        }
+        if ((ulong)State.Cycles >= _options.BootProbeCycleCap) {
+            DumpBootProbeSummary($"CYCLE-CAP at {State.Cycles}");
+            Exit();
+        }
+    }
+
+    private void DumpBootProbeSummary(string reason) {
+        if (_bootProbeSummarized) {
+            return;
+        }
+        _bootProbeSummarized = true;
+        Console.Error.WriteLine($"[bootprobe] ===== TIMELINE SUMMARY ({reason}) =====");
+        foreach ((ushort off, string label) in _bootProbeAddrs) {
+            long first = _bootProbeFirst[off];
+            long hits = _bootProbeHits[off];
+            Console.Error.WriteLine(first < 0
+                ? $"[bootprobe]   cs1:0x{off:X4}  NOT HIT            — {label}"
+                : $"[bootprobe]   cs1:0x{off:X4}  first@{first,-12} hits={hits,-10} — {label}");
+        }
+        Console.Error.WriteLine("[bootprobe] ===== END SUMMARY =====");
+    }
+
     private void OnCheckpointHit() {
+        if (_options.BootProbe) {
+            DumpBootProbeSummary("CHECKPOINT cs1:000C HIT");
+        }
         switch (_options.Mode) {
             case HarnessMode.SnapshotOnCheckpoint:
                 HandleSnapshotMode();

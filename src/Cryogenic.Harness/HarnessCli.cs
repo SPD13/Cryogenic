@@ -147,6 +147,17 @@ public static class HarnessCli {
                 case "--skip-intro":
                     opt.SkipIntroViaEsc = true;
                     break;
+                case "--boot-probe":
+                    opt.BootProbe = true;
+                    break;
+                case "--boot-probe-cap":
+                    if (next is null) {
+                        throw new ArgumentException("--boot-probe-cap requires a cycle count");
+                    }
+                    opt.BootProbe = true;
+                    opt.BootProbeCycleCap = ulong.Parse(next);
+                    i++;
+                    break;
                 case "--skip-intro-until":
                     if (next is null) {
                         throw new ArgumentException("--skip-intro-until requires a scene_id (decimal or 0xHEX)");
