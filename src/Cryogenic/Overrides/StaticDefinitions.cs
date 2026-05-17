@@ -97,7 +97,7 @@ public partial class Overrides {
         DefineFunction(cs1, 0xDB14, "define_mouse_range_ida");
         // cs1:0xDB4C — real C# override in InputCode.cs (MouseStuff).
         // cs1:0xDBB2 — real C# override in IndirectFarCode.cs (CallRestoreCursor).
-        DefineFunction(cs1, 0xDBEC, "draw_mouse_ida");
+        // cs1:0xDBEC draw_mouse_ida (sub_FABC) — real C# override in InputCode.cs.
         DefineFunction(cs1, 0xDC20, "redraw_mouse_ida");
         DefineFunction(cs1, 0xDCE0, "read_game_port_ida");
         // cs1:0xDD5A get_key_hit_ida — real C# override in InputCode.cs (GetKeyHit).
