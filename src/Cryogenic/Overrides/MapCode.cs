@@ -52,6 +52,52 @@ public partial class Overrides {
         DefineFunction(cs1, 0xB714, GlobeRotationAltPath_1000_B714_01B714);
         DefineFunction(cs1, 0xB7D2, GlobeBandScanlineCopy_1000_B7D2_01B7D2);
         DefineFunction(cs1, 0xB427, SavegameMapOverlayExpand_1000_B427_01B427);
+        DefineFunction(cs1, 0x642E, CountTerrainFlagNibbles_1000_642E_01642E);
+    }
+
+    /// <summary>
+    /// Override for cs1:0x642E — <c>sub_82FE</c> (<c>DNCDPRG.ASM:14594</c>),
+    /// the per-record helper called by <c>sub_82C0</c> (cs1:0x63F0
+    /// map_func). Over 3 words at <c>ES:[SI]</c> (pre-decremented), masks
+    /// each with <c>0x3030</c> and counts how many of the two bytes equal
+    /// <c>0x10</c>, returning the tally in <c>DX</c>. Pure compute — no
+    /// INT/call/far/lds — exact static port.
+    /// </summary>
+    /// <remarks>
+    /// Asm (cs1:0x642E..0x6446), cross-verified against the cs1 dump:
+    /// <code>
+    /// mov cx,3 ; dec si ; xor dx,dx
+    /// loc_8304: es: lodsw ; and ax,0x3030
+    ///           cmp ah,0x10 ; jnz +1 ; inc dx
+    ///           cmp al,0x10 ; jnz +1 ; inc dx
+    ///           loop loc_8304
+    /// retn
+    /// </code>
+    /// Forward <c>es:lodsw</c> (ambient CLD). On exit <c>AX</c> = the last
+    /// masked word, <c>CX=0</c> (loop exhausted), <c>SI</c> advanced by 6
+    /// from <c>SI-1</c>, <c>DX</c> = the count the caller uses
+    /// (<c>shr dx,1; inc dx; add bl,dl</c>).
+    /// </remarks>
+    public Action CountTerrainFlagNibbles_1000_642E_01642E(int gotoAddress) {
+        ushort es = ES;
+        ushort si = (ushort)(SI - 1);                  // dec si
+        ushort dx = 0;                                  // xor dx,dx
+        ushort ax = 0;
+        for (int n = 0; n < 3; n++) {                   // mov cx,3 ; loop loc_8304
+            ax = (ushort)(UInt16[es, si] & 0x3030);     // es: lodsw ; and ax,0x3030
+            si = (ushort)(si + 2);
+            if (((ax >> 8) & 0xFF) == 0x10) {           // cmp ah,0x10 ; jnz ; inc dx
+                dx = (ushort)(dx + 1);
+            }
+            if ((ax & 0xFF) == 0x10) {                  // cmp al,0x10 ; jnz ; inc dx
+                dx = (ushort)(dx + 1);
+            }
+        }
+        AX = ax;
+        DX = dx;
+        SI = si;
+        CX = 0;
+        return NearRet();
     }
 
     /// <summary>
