@@ -222,7 +222,73 @@ public sealed class HarnessHelper : CSharpOverrideHelper {
             case HarnessMode.Trace:
                 HandleTraceArm();
                 break;
+            case HarnessMode.DriverDump:
+                HandleDriverDumpMode();
+                break;
         }
+    }
+
+    /// <summary>
+    /// Phase-40 enablement (Tech/57). The checkpoint is reached only after the
+    /// engine's init has run the driver-load sequence, so the project's
+    /// <c>cs1:0xE593</c> per-driver-load-pass hook has already emitted the
+    /// <c>..._E593_After_driver_load_pass_N.bin</c> dumps. Here we snapshot,
+    /// then self-verify that the driver runtime segments actually hold code
+    /// (real binaries loaded, not shadowed by C# overrides) and report a
+    /// definitive verdict + the list of per-pass dumps, so a single run tells
+    /// the operator whether Phase-40 RE can proceed from real bytes.
+    /// </summary>
+    private void HandleDriverDumpMode() {
+        if (_options.SnapshotTaken) {
+            return;
+        }
+        _options.SnapshotTaken = true;
+
+        SnapshotMeta meta = Snapshot.Save(_options.OutputPath, Memory, State, _options.Checkpoint);
+        Console.Error.WriteLine(
+            $"[harness] driver-dump snapshot → {_options.OutputPath} (cycles={State.Cycles})");
+
+        (string name, uint lin)[] segs = {
+            ("DNVGA  @0xD000", 0xD0000u),
+            ("DNPCS2 @0xE000", 0xE0000u),
+            ("DNMID  @0xF000", 0xF0000u),
+        };
+        bool allLoaded = true;
+        foreach ((string name, uint lin) in segs) {
+            byte[] sample = Memory.ReadRam(64u, lin);
+            int nz = 0;
+            foreach (byte b in sample) {
+                if (b != 0) {
+                    nz++;
+                }
+            }
+            bool loaded = nz > 0;
+            allLoaded &= loaded;
+            Console.Error.WriteLine(
+                $"[harness] {name}: {nz}/64 nonzero — {(loaded ? "LOADED" : "ALL-ZERO (driver not resident)")}");
+        }
+
+        string dumpDir = Configuration.RecordedDataDirectory ?? Environment.CurrentDirectory;
+        string[] passDumps;
+        try {
+            passDumps = Directory.GetFiles(dumpDir, "spice86dumpMemoryDump_1000_E593_After_driver_load_pass_*.bin");
+        } catch {
+            passDumps = Array.Empty<string>();
+        }
+        Array.Sort(passDumps);
+        Console.Error.WriteLine(
+            $"[harness] per-driver-load-pass dumps ({passDumps.Length}) in {dumpDir}:");
+        foreach (string p in passDumps) {
+            Console.Error.WriteLine($"[harness]   {Path.GetFileName(p)}");
+        }
+
+        Console.Error.WriteLine(allLoaded && passDumps.Length > 0
+            ? "[harness] DRIVER-DUMP PASS — real driver binaries resident; Phase-40 static RE can proceed."
+            : "[harness] DRIVER-DUMP FAIL — driver segments empty and/or no pass dumps. " +
+              "The run replaced the drivers with C# overrides or didn't reach the driver-load path; " +
+              "re-run a full boot with the real driver binaries (see Tech/57).");
+
+        Exit();
     }
 
     private void HandleTraceArm() {

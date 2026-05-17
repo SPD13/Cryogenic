@@ -125,6 +125,19 @@ public enum HarnessMode {
     SnapshotOnCheckpoint,
     Invoke,
     Trace,
+
+    /// <summary>
+    /// Phase-40 enablement (Tech/57). A full boot to the checkpoint that lets
+    /// the engine's init run the driver-load sequence (cs1:0xE57B..0xE593) so
+    /// the project's per-driver-load-pass dump hook emits
+    /// <c>spice86dumpMemoryDump_1000_E593_After_driver_load_pass_N.bin</c>.
+    /// On checkpoint it snapshots, then <b>self-verifies</b> that the driver
+    /// runtime segments (DNVGA→0xD000, DNPCS2/DNSBP→0xE000, DNMID/DNPCS→
+    /// 0xF000) are actually non-zero (real driver binaries loaded, not
+    /// replaced by C# overrides), prints a PASS/FAIL verdict + the list of
+    /// per-pass dump files, and exits.
+    /// </summary>
+    DriverDump,
 }
 
 public enum CallConvention {
