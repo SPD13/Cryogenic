@@ -18,6 +18,7 @@ public partial class Overrides {
         DefineFunction(cs1, 0xF0FF, BumpAllocate_1000_F0FF_01F0FF);
         DefineFunction(cs1, 0xF11C, AllocCxPagesToDi_1000_F11C_01F11C);
         DefineFunction(cs1, 0xF13F, AllocatorAttemptToFreeSpace_1000_F13F_01F13F);
+        DefineFunction(cs1, 0xF403, HsqDecompressDsSiToEsDi_1000_F403_01F403);
     }
 
     /// <summary>
@@ -322,6 +323,130 @@ public partial class Overrides {
             }
             dx = (ushort)(esSeg + 0x1000);                      // mov dx,es ; add dx,0x1000
             // jmp F1C1
+        }
+    }
+
+    /// <summary>
+    /// Override for cs1:0xF403 — <c>hsq_decomp_skip_header_dssi_to_esdi_ida</c>
+    /// (<c>DNCDPRG.ASM sub_112D3</c>): the inner HSQ (LZ77 + bit-stream) decompressor.
+    /// Skips the 6-byte header at <c>DS:SI</c>, decodes literals / short back-references
+    /// (2 length bits + 1 offset byte, off ∈ [-256,-1]) / long back-references
+    /// (13-bit offset + 3-bit length, optional extended-length byte) into the output at
+    /// <c>ES:DI</c>, and returns the decompressed length in <c>CX</c> with <c>CF=1</c>.
+    /// Pure compute (no INT/disk/driver/indirect) — exact static port. Gates every
+    /// compressed resource load.
+    /// </summary>
+    /// <remarks>
+    /// Ported byte-faithfully from the authoritative commented disassembly
+    /// <c>DNCDPRG.ASM sub_112D3</c> (37431–37553), cross-verified against cs1 dump bytes
+    /// 0xF403..0xF4A8 and the format spec in <c>Tech/02-hsq-compression.md</c>.
+    /// <para>
+    /// The bit queue lives in <c>BP</c>: each read is <c>shr bp,1</c> (LSB → CF); when
+    /// <c>BP</c> reaches 0 a fresh LE word is loaded and <c>stc; rcr bp,1</c> reseeds it
+    /// with a top sentinel bit (so the queue self-empties after 16 reads) while
+    /// extracting the current bit into CF. Modelled here by <c>ReadBit()</c>.
+    /// </para>
+    /// <code>
+    /// F403: 51 57 1E         push cx; push di; push ds
+    /// F406: 83 C6 06         add si,6                 ; skip HSQ header
+    /// F409: 33 ED            xor bp,bp                ; empty bit queue
+    /// F40B: EB 28            jmp 0xF435 (loc_11305)   ; (0xF40D loc_112DD = sub_10FA6 tail, unreached)
+    /// loc_11305 0xF435: shr bp,1 ; jz reload ; jnb loc_11316 ; (CF=1) movsb literal ; jmp loc_11305
+    /// loc_11316: xor cx,cx ; bit -> jb loc_11352(long) ; else 2 len bits (rcl cx,1 x2)
+    ///            ; lodsb ; mov ah,0xFF -> ax=offset(-256..-1) ; loc_1133F
+    /// loc_11352: lodsw ; cl=al ; ax>>=3 ; or ah,0xE0 ; cl&=7
+    ///            ; cl!=0 -> copy(len=cl) ; else lodsb ext ; ext!=0 -> copy(len=ext)
+    ///            ; ext==0 -> EOS: stc; cx=di; pop ds/di; add sp,2; sub cx,di; retn
+    /// loc_1133F: add ax,di ; xchg ax,si ; ds=es ; cx+=2 ; rep movsb ; ds=bx ; si=ax ; jmp loc_11305
+    /// </code>
+    /// <c>loc_112DD</c> (0xF40D, the bulk-<c>rep movsw</c> block) is reachable only from
+    /// <c>sub_10FA6</c>, never from this entry's <c>jmp 0xF435</c>, so it is not part of
+    /// this override (it stays raw asm for that other caller). Back-reference copies are
+    /// byte-by-byte forward within the output segment (overlap = RLE, intentional).
+    /// </remarks>
+    public System.Action HsqDecompressDsSiToEsDi_1000_F403_01F403(int gotoAddress) {
+        ushort inSeg = DS;                          // push ds (restored at EOS)
+        ushort outSeg = ES;
+        ushort entryDi = DI;                        // push di (restored at EOS)
+        ushort si = (ushort)(SI + 6);               // add si,6 (skip 6-byte header)
+        ushort di = DI;
+        ushort bp = 0;                              // xor bp,bp
+
+        int ReadBit() {
+            ushort old = bp;
+            bp = (ushort)(bp >> 1);                 // shr bp,1  (CF = old bit0)
+            int cf = old & 1;
+            if (bp == 0) {                          // jz -> reload
+                ushort w = (ushort)(UInt8[inSeg, si] | (UInt8[inSeg, (ushort)(si + 1)] << 8));
+                si = (ushort)(si + 2);              // lodsw
+                bp = (ushort)(0x8000 | (w >> 1));   // mov bp,ax; stc; rcr bp,1
+                cf = w & 1;                         //   CF = ax & 1
+            }
+            return cf;
+        }
+
+        while (true) {
+            // loc_11305
+            if (ReadBit() == 1) {                   // (CF=1) literal
+                UInt8[outSeg, di] = UInt8[inSeg, si];   // loc_1130B: movsb
+                si = (ushort)(si + 1);
+                di = (ushort)(di + 1);
+                continue;                            // jmp loc_11305
+            }
+
+            // loc_11316 — back-reference
+            ushort cx;
+            ushort ax;
+            if (ReadBit() == 1) {
+                // loc_11352 — long reference
+                ushort w = (ushort)(UInt8[inSeg, si] | (UInt8[inSeg, (ushort)(si + 1)] << 8));
+                si = (ushort)(si + 2);              // lodsw
+                int cl = (w & 0xFF) & 7;            // mov cl,al ; and cl,7
+                ax = (ushort)((w >> 3) | 0xE000);  // shr ax,1 x3 ; or ah,0xE0 (13-bit -off)
+                if (cl != 0) {
+                    cx = (ushort)cl;               // jnz loc_1133F (len = cl)
+                } else {
+                    ushort savedOff = ax;          // mov bx,ax
+                    int ext = UInt8[inSeg, si];    // lodsb
+                    si = (ushort)(si + 1);
+                    ax = savedOff;                 // mov ax,bx
+                    if (ext == 0) {                // EOS
+                        CX = (ushort)(di - entryDi);   // mov cx,di; (pop di); sub cx,di
+                        SI = si;
+                        DI = entryDi;              // pop di
+                        DS = inSeg;                // pop ds
+                        ES = outSeg;
+                        AX = ax;
+                        BX = ax;
+                        CarryFlag = true;          // stc
+                        return NearRet();
+                    }
+                    cx = (ushort)ext;              // jnz loc_1133F (len = ext)
+                }
+            } else {
+                // short reference
+                cx = 0;                            // xor cx,cx
+                cx = (ushort)((cx << 1) | ReadBit());  // loc_1132E: rcl cx,1
+                cx = (ushort)((cx << 1) | ReadBit());  // loc_1133A: rcl cx,1
+                int al = UInt8[inSeg, si];         // lodsb
+                si = (ushort)(si + 1);
+                ax = (ushort)(0xFF00 | al);        // mov ah,0xFF (off ∈ [-256,-1])
+            }
+
+            // loc_1133F — overlapping back-reference copy within the output segment.
+            ax = (ushort)(ax + di);                // add ax,di (source = di + signed off)
+            ushort cpSi = ax;                      // xchg ax,si (si = source)
+            ushort restoreSi = si;                 //   ax = old input si
+            cx = (ushort)(cx + 2);                 // inc cx ; inc cx
+            ushort cpDi = di;
+            for (int k = 0; k < cx; k++) {         // rep movsb (ds=es; overlap ok)
+                UInt8[outSeg, cpDi] = UInt8[outSeg, cpSi];
+                cpSi = (ushort)(cpSi + 1);
+                cpDi = (ushort)(cpDi + 1);
+            }
+            di = cpDi;                             // di advanced by the copy
+            si = restoreSi;                        // mov si,ax (input si unchanged)
+            // jmp loc_11305
         }
     }
 }
