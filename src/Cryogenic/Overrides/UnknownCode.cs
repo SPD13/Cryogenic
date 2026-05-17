@@ -68,6 +68,9 @@ public partial class Overrides {
         DefineFunction(cs1, 0x3950, Thunk_Clr46D7SetSi3916_JmpDA5F_1000_3950_13950);
         DefineFunction(cs1, 0x3901, Thunk_SetSi3916Bp10_JmpDA25_1000_3901_13901);
         DefineFunction(cs1, 0xA44C, Thunk_LoadAdd28E7_JmpA435_1000_A44C_1A44C);
+        DefineFunction(cs1, 0xC137, LoadIconsSprites_1000_C137_01C137);
+        DefineFunction(cs1, 0xC4F0, RectAtSiToRegs_1000_C4F0_01C4F0);
+        DefineFunction(cs1, 0xED40, GetEmsEmmHandle_1000_ED40_01ED40);
         DefineFunction(cs1, 0xE3CC, LcgPrngD826_1000_E3CC_1E3CC);
         DefineFunction(cs1, 0x2AAF, TableSearchByAlDi1190_1000_2AAF_12AAF);
         DefineFunction(cs1, 0x5B93, MemCopy8Bytes46E3ToD834_1000_5B93_15B93);
@@ -1728,6 +1731,36 @@ public partial class Overrides {
         ZeroFlag = (r & 0xFF) == 0;
         SignFlag = (r & 0x80) != 0;
         return NearJump(0xA435);
+    }
+
+    /// <summary>cs1:0xC137 <c>load_icons_sprites_ida</c> (<c>sub_E007</c>) —
+    /// <c>xor ax,ax; jmp short sub_E00E</c>. The AX=0 alternate entry into
+    /// <c>cs1:0xC13E</c> (the real sprite-sheet loader, still asm).</summary>
+    public Action LoadIconsSprites_1000_C137_01C137(int gotoAddress) {
+        AX = 0;
+        return NearJump(0xC13E);
+    }
+
+    /// <summary>cs1:0xC4F0 <c>rect_at_si_to_regs_ida</c> (<c>sub_E3C0</c>) —
+    /// <c>mov dx,[si]; mov bx,[si+2]; mov bp,[si+4]; mov ax,[si+6]</c> then
+    /// falls through into the next routine at <c>cs1:0xC4FB</c> (raw asm).
+    /// Loads a 4-word rectangle from <c>DS:SI</c> into DX/BX/BP/AX.</summary>
+    public Action RectAtSiToRegs_1000_C4F0_01C4F0(int gotoAddress) {
+        ushort si = SI;
+        DX = UInt16[DS, si];
+        BX = UInt16[DS, (ushort)(si + 2)];
+        BP = UInt16[DS, (ushort)(si + 4)];
+        AX = UInt16[DS, (ushort)(si + 6)];
+        return NearJump(0xC4FB);                       // fall through to next proc
+    }
+
+    /// <summary>cs1:0xED40 <c>get_ems_emm_handle_ida</c> (<c>sub_10C10</c>) —
+    /// <c>mov dx, cs:word_10C0A</c> then falls through into the next routine at
+    /// <c>cs1:0xED45</c> (raw asm). Reads the EMS/EMM handle word from
+    /// <c>cs1:0xED3A</c> into DX.</summary>
+    public Action GetEmsEmmHandle_1000_ED40_01ED40(int gotoAddress) {
+        DX = UInt16[cs1, 0xED3A];
+        return NearJump(0xED45);                       // fall through to next proc
     }
 
     // --- Thunk leaves (cont.) ---
