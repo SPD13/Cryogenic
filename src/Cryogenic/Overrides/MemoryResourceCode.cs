@@ -19,6 +19,7 @@ public partial class Overrides {
         DefineFunction(cs1, 0xF11C, AllocCxPagesToDi_1000_F11C_01F11C);
         DefineFunction(cs1, 0xF13F, AllocatorAttemptToFreeSpace_1000_F13F_01F13F);
         DefineFunction(cs1, 0xF403, HsqDecompressDsSiToEsDi_1000_F403_01F403);
+        DefineFunction(cs1, 0xF314, LocateResByNameDsSi_1000_F314_01F314);
         // DUNE.DAT I/O leaves: serve from the managed shim only when the host
         // archive was located+validated; otherwise leave the asm (emulated-DOS
         // INT 21) path in place so a working game is never regressed.
@@ -521,5 +522,165 @@ public partial class Overrides {
         AX = (ushort)n;                             // ax = bytes read
         Alu16.Sub(AX, CX);                          // cmp ax,cx (sets CF/ZF/SF/OF/AF/PF)
         return NearRet();
+    }
+
+    /// <summary>
+    /// Override for cs1:0xF314 — <c>locate_res_by_name_dssi_ida</c>
+    /// (<c>DNCDPRG.ASM sub_111E4</c>). Resolves a resource name at <c>DS:SI</c>
+    /// to its index in <c>AX</c> (<c>CF=0</c>) or reports not-found
+    /// (<c>CF=1</c>). Two paths: a special compact encoder for <c>\P</c>-prefixed
+    /// speech names, and the normal lookup — a capped-16 length scan, a cached
+    /// match at <c>ds:0xCE78</c>, then a 247-entry <c>repe cmpsb</c> scan over
+    /// the pointer table at <c>ss:0x31FF</c> (each slot → name at <c>ptr+2</c>).
+    /// Pure compute over emulated memory — exact static port.
+    /// </summary>
+    /// <remarks>
+    /// Ported byte-faithfully from the authoritative disassembly
+    /// <c>DNCDPRG.ASM sub_111E4</c> (37258–37355), cross-verified against cs1
+    /// dump bytes 0xF314..0xF3A6.
+    /// <code>
+    /// push ss; pop es
+    /// cmp word [si+2],0x505C ; jz loc_1123C        ; "\P" speech-name path
+    /// ; --- normal: capped-16 strlen via loopne ---
+    /// push si; cx=0x10; dx=cx
+    /// loc_111F3: lodsb; or al,al; loopne loc_111F3
+    ///   jnz loc_111FB; inc cx
+    /// loc_111FB: sub cx,0x10; neg cx; pop si        ; cx = name length
+    /// ; --- cached-entry check ---
+    /// xor dx,dx; ax=[0xCE78]; di=ax; shl di,1; di=[di+0x31FF]; di+=2
+    /// push cx; push si; repe cmpsb; pop si; pop cx; jz loc_11275
+    /// ; --- table scan (247 entries @ ss:0x31FF) ---
+    /// bx=0x31FF; bp=0xF7
+    /// loc_1121F: di=es:[bx]; ax=(bx-0x31FF)>>1; bx+=2; di+=2
+    ///   push cx; push si; repe cmpsb; pop si; pop cx; jz loc_11275
+    ///   dec bp; jnz loc_1121F
+    ///   stc; retn                                   ; not found
+    /// loc_1123C: add si,4; lodsb; al-=0x40; dl=al; bx=0; cx=3
+    /// loc_11249: lodsb; (al&gt;=0x41 ? al-=7); al&amp;=0xF; bx&lt;&lt;=4; bl|=al; loop
+    ///   lodsb; cmp al,0x4F; cmc; rcl dl,1
+    ///   lodsb; sub al,0x41; jb loc_11273; al&lt;&lt;=4; bh|=al
+    /// loc_11273: ax=bx
+    /// loc_11275: clc; retn
+    /// </code>
+    /// <c>es=ss</c> throughout; the pointer table and name strings live in the
+    /// stack/data segment. <c>repe cmpsb</c> is bracketed by push/pop of CX/SI so
+    /// every entry is compared against the same name/length. The trailing
+    /// <c>cmp al,0x4F; cmc</c> yields <c>CF = (al &gt;= 0x4F)</c> into <c>rcl dl,1</c>.
+    /// </remarks>
+    public System.Action LocateResByNameDsSi_1000_F314_01F314(int gotoAddress) {
+        ushort ds = DS;
+        ushort ss = SS;
+        ES = ss;                                        // push ss ; pop es
+        ushort si = SI;
+
+        if (UInt16[ds, (ushort)(si + 2)] == 0x505C) {   // cmp word [si+2],0x505C ; jz loc_1123C
+            si = (ushort)(si + 4);                       // add si,4
+            byte a = UInt8[ds, si]; si = (ushort)(si + 1);
+            byte dl = (byte)(a - 0x40);                  // sub al,0x40 ; mov dl,al
+            ushort bx = 0;
+            for (int n = 0; n < 3; n++) {                // cx=3 ; loop loc_11249
+                a = UInt8[ds, si]; si = (ushort)(si + 1);
+                if (a >= 0x41) {                         // cmp al,0x41 ; jb (skip) ; sub al,7
+                    a = (byte)(a - 7);
+                }
+                a &= 0x0F;
+                bx = (ushort)(bx << 4);                  // shl bx,1 x4
+                bx = (ushort)((bx & 0xFF00) | (byte)((bx & 0xFF) | a));   // or bl,al
+            }
+            a = UInt8[ds, si]; si = (ushort)(si + 1);    // lodsb
+            int cf = a >= 0x4F ? 1 : 0;                  // cmp al,0x4F ; cmc  -> CF=(al>=0x4F)
+            dl = (byte)((dl << 1) | cf);                 // rcl dl,1
+            a = UInt8[ds, si]; si = (ushort)(si + 1);    // lodsb
+            if (a >= 0x41) {                             // sub al,0x41 ; jb loc_11273
+                int hi = (a - 0x41) << 4;                // shl al,1 x4
+                bx = (ushort)((bx & 0x00FF) | (((((bx >> 8) & 0xFF) | hi) & 0xFF) << 8)); // or bh,al
+            }
+            AX = bx;                                     // loc_11273: mov ax,bx
+            BX = bx;
+            DX = (ushort)((DX & 0xFF00) | dl);           // dl built; dh = caller's
+            SI = si;
+            CarryFlag = false;                           // loc_11275: clc
+            return NearRet();
+        }
+
+        // --- normal path: capped-16 name length via loopne ---
+        ushort savedSi = si;                             // push si
+        ushort cx = 0x0010;                              // mov cx,0x10  (dx=cx is dead — overwritten)
+        byte al = 0;
+        while (true) {                                   // loc_111F3
+            al = UInt8[ds, si]; si = (ushort)(si + 1);   // lodsb
+            bool zf = al == 0;                           // or al,al
+            cx = (ushort)(cx - 1);                       // loopne: cx--
+            if (cx != 0 && !zf) {
+                continue;
+            }
+            break;
+        }
+        if (al == 0) {                                   // jnz loc_111FB (ZF from last or al,al) ; else inc cx
+            cx = (ushort)(cx + 1);
+        }
+        cx = (ushort)(cx - 0x10);                        // sub cx,0x10
+        cx = (ushort)(-(short)cx);                       // neg cx  -> name length
+        si = savedSi;                                    // pop si
+        ushort nameLen = cx;
+
+        // --- cached-entry check at ds:0xCE78 ---
+        ushort cachedIdx = UInt16[ds, 0xCE78];           // mov ax,[0xCE78]
+        ushort di = (ushort)(UInt16[ss, (ushort)((cachedIdx << 1) + 0x31FF)] + 2);
+        if (RepeCmpsbEqual(ds, savedSi, ss, di, nameLen)) {   // repe cmpsb ; jz loc_11275
+            AX = cachedIdx;
+            DX = 0;                                       // xor dx,dx earlier
+            CX = nameLen;
+            SI = savedSi;
+            DI = (ushort)(di + nameLen);
+            CarryFlag = false;
+            return NearRet();
+        }
+
+        // --- 247-entry pointer-table scan @ ss:0x31FF ---
+        ushort bxScan = 0x31FF;
+        ushort idx = 0;
+        for (int bp = 0xF7; bp != 0; bp--) {             // mov bp,0xF7 ; dec bp ; jnz
+            ushort entry = UInt16[ss, bxScan];           // es: mov di,[bx]
+            idx = (ushort)((bxScan - 0x31FF) >> 1);      // ax = (bx-0x31FF)>>1
+            bxScan = (ushort)(bxScan + 2);               // add bx,2
+            ushort cmpDi = (ushort)(entry + 2);          // add di,2
+            if (RepeCmpsbEqual(ds, savedSi, ss, cmpDi, nameLen)) {   // jz loc_11275
+                AX = idx;
+                DX = 0;
+                CX = nameLen;
+                SI = savedSi;
+                DI = (ushort)(cmpDi + nameLen);
+                BX = bxScan;
+                BP = (ushort)bp;
+                CarryFlag = false;
+                return NearRet();
+            }
+        }
+        // stc ; retn — not found
+        AX = idx;
+        DX = 0;
+        CX = nameLen;
+        SI = savedSi;
+        BX = bxScan;
+        BP = 0;
+        CarryFlag = true;
+        return NearRet();
+    }
+
+    /// <summary>
+    /// <c>repe cmpsb</c> equivalent: returns <c>true</c> iff the first
+    /// <paramref name="count"/> bytes at <c>seg1:off1</c> and <c>seg2:off2</c>
+    /// are all equal (forward, ambient CLD). <c>count==0</c> ⇒ <c>true</c>
+    /// (the asm's <c>repe</c> with CX=0 performs no compare and falls through
+    /// as "equal" for the subsequent <c>jz</c>).
+    /// </summary>
+    private bool RepeCmpsbEqual(ushort seg1, ushort off1, ushort seg2, ushort off2, ushort count) {
+        for (int k = 0; k < count; k++) {
+            if (UInt8[seg1, (ushort)(off1 + k)] != UInt8[seg2, (ushort)(off2 + k)]) {
+                return false;
+            }
+        }
+        return true;
     }
 }
