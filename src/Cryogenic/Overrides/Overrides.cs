@@ -173,6 +173,7 @@ public partial class Overrides : CSharpOverrideHelper {
 		DefineMemoryResourceCodeOverrides();
 		DefineIndirectFarCodeOverrides();
 		DefineGraphicsCompositionCodeOverrides();   // Phase 37
+		DefineSaveLoadCodeOverrides();              // Phase 38
 
 		DefineDriversRemapping();
 		DetectDriversEntryPoints();
