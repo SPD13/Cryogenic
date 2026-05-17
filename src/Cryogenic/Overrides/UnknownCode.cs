@@ -1034,18 +1034,27 @@ public partial class Overrides {
         }
         di = UInt16[ES, di];                                // follow link
         di = (ushort)(di - 0x0A);
+        bool carry;
         while (true) {
             di = (ushort)(di + 0x0A);
             byte k2 = UInt8[ES, (ushort)(di + 2)];
             if (DL == k2) {
                 if (!(AX > UInt16[ES, di])) {
+                    // exit via `cmp ax,es:[di]`: CF=1 iff ax<[di] (ax==[di] => ZF, CF=0)
+                    carry = AX < UInt16[ES, di];
                     break;
                 }
             } else if (!(DL > k2)) {
+                // exit via `cmp dl,es:[di+2]` with dl<k2 => CF=1
+                carry = true;
                 break;
             }
         }
         DI = di;
+        // Faithful `retn` CF (asm sub_11277): CF=0 only on an exact key match
+        // (dl==[di+2] && ax==[di]); CF=1 otherwise. Callers (e.g. sub_11177)
+        // branch on this with `jb`.
+        CarryFlag = carry;
         return NearRet();
     }
 

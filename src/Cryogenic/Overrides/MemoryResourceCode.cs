@@ -20,6 +20,7 @@ public partial class Overrides {
         DefineFunction(cs1, 0xF13F, AllocatorAttemptToFreeSpace_1000_F13F_01F13F);
         DefineFunction(cs1, 0xF403, HsqDecompressDsSiToEsDi_1000_F403_01F403);
         DefineFunction(cs1, 0xF314, LocateResByNameDsSi_1000_F314_01F314);
+        DefineFunction(cs1, 0xF2A7, SeekDuneDatToResDsDx_1000_F2A7_01F2A7);
         // DUNE.DAT I/O leaves: serve from the managed shim only when the host
         // archive was located+validated; otherwise leave the asm (emulated-DOS
         // INT 21) path in place so a working game is never regressed.
@@ -522,6 +523,75 @@ public partial class Overrides {
         AX = (ushort)n;                             // ax = bytes read
         Alu16.Sub(AX, CX);                          // cmp ax,cx (sets CF/ZF/SF/OF/AF/PF)
         return NearRet();
+    }
+
+    /// <summary>
+    /// Override for cs1:0xF2A7 — <c>sub_11177</c> (<c>DNCDPRG.ASM:37167</c>),
+    /// the DUNE.DAT-resource-first path resolver called by
+    /// <c>subLoadSavegame</c> (<c>cs1:0xF1FB</c>). If DUNE.DAT is open
+    /// (<c>[0xDBBA]&gt;=1</c>) and the name at <c>DS:DX</c> resolves to a TOC
+    /// entry, it seeks DUNE.DAT to that resource and returns <c>CF=0</c>;
+    /// otherwise <c>CF=1</c> (the caller then opens the name as a real disk
+    /// file). Pure orchestration over the already-C# leaves <c>0xF314</c> /
+    /// <c>0xF3A7</c> / <c>0xF2D6</c> — no INT 21, exact static port.
+    /// </summary>
+    /// <remarks>
+    /// Asm (cs1:0xF2A7..0xF2D5), cross-verified against the cs1 dump:
+    /// <code>
+    /// push di ; push es
+    /// cmp word [0xDBBA],1 ; jb loc_111A3        ; DUNE.DAT not open -> CF=1
+    /// mov si,dx
+    /// call sub_111E4 (0xF314) ; jb loc_111A3    ; name not in TOC
+    /// call sub_11277 (0xF3A7) ; jb loc_111A3    ; record not found (CF from exit cmp)
+    /// xor cx,cx ; mov cl,es:[di+5] ; mov bp,cx
+    /// mov cx,es:[di+3] ; mov ax,es:[di+6] ; mov dx,es:[di+8]
+    /// call sub_111A6 (0xF2D6)                   ; DuneDatSeek dx:ax (CF=0)
+    /// loc_111A3: pop es ; pop di ; retn
+    /// </code>
+    /// <c>DI</c>/<c>ES</c> are restored by the push/pop; the field reads use
+    /// the record <c>ES:DI</c> that <c>sub_11277</c> leaves. The three callees
+    /// are invoked as C# subroutines (they <c>NearRet</c>; their register/CF
+    /// effects are read back exactly as a <c>call</c> would).
+    /// </remarks>
+    public System.Action SeekDuneDatToResDsDx_1000_F2A7_01F2A7(int gotoAddress) {
+        ushort savedDi = DI;                            // push di
+        ushort savedEs = ES;                            // push es
+
+        if (UInt16[DS, 0xDBBA] < 1) {                   // cmp [0xDBBA],1 ; jb loc_111A3
+            ES = savedEs;
+            DI = savedDi;
+            CarryFlag = true;                           // CF from the cmp ([0xDBBA] < 1)
+            return NearRet();
+        }
+
+        SI = DX;                                         // mov si,dx
+        LocateResByNameDsSi_1000_F314_01F314(0);         // call sub_111E4
+        if (CarryFlag) {                                 // jb loc_111A3
+            ES = savedEs;
+            DI = savedDi;
+            return NearRet();                            // CF=1 (not found)
+        }
+
+        TwoLevelKeyedSearch_1000_F3A7_1F3A7(0);          // call sub_11277
+        if (CarryFlag) {                                 // jb loc_111A3 (CF from exit cmp)
+            ES = savedEs;
+            DI = savedDi;
+            return NearRet();
+        }
+
+        // record fields from the ES:DI the search left
+        ushort es = ES;
+        ushort di = DI;
+        ushort cx = UInt8[es, (ushort)(di + 5)];         // xor cx,cx ; mov cl,es:[di+5]
+        BP = cx;                                         // mov bp,cx
+        CX = UInt16[es, (ushort)(di + 3)];               // mov cx,es:[di+3]
+        AX = UInt16[es, (ushort)(di + 6)];               // mov ax,es:[di+6]
+        DX = UInt16[es, (ushort)(di + 8)];               // mov dx,es:[di+8]
+        DuneDatSeek_1000_F2D6_01F2D6(0);                 // call sub_111A6 (CF=0)
+
+        ES = savedEs;                                    // loc_111A3: pop es
+        DI = savedDi;                                    //            pop di
+        return NearRet();                                // CF=0 (from DuneDatSeek)
     }
 
     /// <summary>
