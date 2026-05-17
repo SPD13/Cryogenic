@@ -151,7 +151,7 @@ public partial class Overrides {
         // cs1:0xF2EA read_dune_dat_cx_to_esdi_ida  — (real DuneDatService shim when the
         //   host DUNE.DAT is available, symbolic fallback otherwise — conditional there).
         // cs1:0xF2FC strcpy_to_filename_buf_ida — real C# override in MemoryResourceCode.cs.
-        DefineFunction(cs1, 0xF314, "locate_res_by_name_dssi_ida");
+        // cs1:0xF314 locate_res_by_name_dssi_ida — real C# override in MemoryResourceCode.cs.
         // cs1:0xF403 hsq_decomp_skip_header_dssi_to_esdi_ida — real C# override in MemoryResourceCode.cs.
         // Jumped to by self modifying code, needs to be there
         DefineFunction(cs2, 0x1EC9, "split_C000_1EC9_C1EC9");
