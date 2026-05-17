@@ -63,7 +63,7 @@ public partial class Overrides {
         // (ComputePolarOffset / GlobeRotationDispatch / GlobeFarBlit / ComputeFremenSpicePercentages).
         DefineFunction(cs1, 0xC097, "gfx_call_bp_with_front_buffer_as_screen_ida");
         DefineFunction(cs1, 0xC108, "transition_ida");
-        DefineFunction(cs1, 0xC137, "load_icons_sprites_ida");
+        // cs1:0xC137 load_icons_sprites_ida (sub_E007) — real C# override in UnknownCode.cs.
         DefineFunction(cs1, 0xC13E, "open_sprite_sheet_ida");
         DefineFunction(cs1, 0xC1BA, "hnm_apply_palette_ida");
         // cs1:0xC22F — real C# override in GraphicsCompositionCode.cs (DrawSprite, Phase 37).
@@ -71,7 +71,7 @@ public partial class Overrides {
         // cs1:0xC49A — real C# override in IndirectFarCode.cs (GfxCopyFramebufferToScreen).
         // cs1:0xC4AA — real C# override in IndirectFarCode.cs (GfxCopyRectToScreen).
         // cs1:0xC4CD — real C# override in IndirectFarCode.cs (GfxCopyFramebufToScreen).
-        DefineFunction(cs1, 0xC4F0, "rect_at_si_to_regs_ida");
+        // cs1:0xC4F0 rect_at_si_to_regs_ida (sub_E3C0) — real C# override in UnknownCode.cs.
         DefineFunction(cs1, 0xC92B, "hnm_reset_and_read_header_ida");
         DefineFunction(cs1, 0xC93C, "hnm_read_header_ida");
         // cs1:0xC9E8 hnm_do_frame_skippable_ida — see VideoCode.cs (harness stub).
@@ -123,7 +123,7 @@ public partial class Overrides {
         // cs1:0xEC59 — real C# override in IndirectFarCode.cs (CallMemoryFunc1).
         DefineFunction(cs1, 0xEC9C, "xms_memory_func_1_ida");
         DefineFunction(cs1, 0xECEC, "xms_memory_func_1_ida");
-        DefineFunction(cs1, 0xED40, "get_ems_emm_handle_ida");
+        // cs1:0xED40 get_ems_emm_handle_ida (sub_10C10) — real C# override in UnknownCode.cs.
         DefineFunction(cs1, 0xED45, "call_ems_func_ida");
         DefineFunction(cs1, 0xEDB9, "map_ems_for_midi_audio_ida");
         DefineFunction(cs1, 0xEE02, "ems_memory_func_2_ida");
