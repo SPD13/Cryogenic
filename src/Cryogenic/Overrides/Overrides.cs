@@ -224,6 +224,9 @@ public partial class Overrides : CSharpOverrideHelper {
 	/// <summary>Counter for memory dumps at CS4:03EE to create unique filenames.</summary>
 	private int callsTo03ED = 0;
 
+	/// <summary>Counter for the per-driver-load-pass dumps at CS1:E593 (Phase 40 enablement).</summary>
+	private int callsToE593 = 0;
+
 	/// <summary>
 	/// Exports a memory dump with the specified filename suffix.
 	/// </summary>
@@ -251,6 +254,19 @@ public partial class Overrides : CSharpOverrideHelper {
 		});
 		DoOnTopOfInstruction(cs1, 0xE593, () => {
 			DriverLoadToolbox.ResetAllocator(State, Memory);
+			// Phase 40 enablement: cs1:0xE593 is the `ret` ending the per-driver
+			// load+remap routine (sub_1044B). The driver just read in is resident
+			// at its runtime segment (DNVGA→0xD000, DNPCS2/DNSBP→0xE000,
+			// DNMID/DNPCS→0xF000) and not yet erased by later init/self-modifying
+			// code. Emit one counted driver-inclusive dump per load pass: a
+			// harness run that loads the *real* driver binaries (instead of the
+			// C# overrides) then yields snapshots usable for static RE. The
+			// standing cs1:0x000C "After_driver_load" dump shows 0xD000/0xE000/
+			// 0xF000 all-zero precisely because that run replaced the drivers
+			// with C# overrides, so they were never resident there.
+			callsToE593++;
+			DumpMemoryWithSuffix("_" + ConvertUtils.ToHex16WithoutX(cs1) + "_E593_After_driver_load_pass_" +
+								 callsToE593);
 		});
 	}
 
