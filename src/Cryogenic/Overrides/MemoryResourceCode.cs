@@ -12,21 +12,47 @@ public partial class Overrides {
     /// <summary>
     /// Registers memory/resource helper overrides with Spice86.
     /// </summary>
+    /// <summary>
+    /// Code segment the early-init resource loader executes under (`CS=0x100D`,
+    /// empirically confirmed by the Tech/57 `--stall-sample`: 388/400 samples).
+    /// It is the same linear bytes as <see cref="cs1"/> framed +0xD paragraphs
+    /// higher, so the loader-framed offset of a cs1 offset is <c>off - 0xD0</c>.
+    /// Spice86 keys function overrides by segment:offset, so the resource-layer
+    /// overrides must be registered for BOTH framings or the loader path
+    /// silently runs raw asm (the cause of the Tech/57 boot-stall runaway).
+    /// </summary>
+    private ushort LoaderCs => (ushort)(cs1 + 0x000D);
+
+    private ushort LoaderOff(ushort cs1Off) => (ushort)(cs1Off - 0x00D0);
+
     public void DefineMemoryResourceCodeOverrides() {
         DefineFunction(cs1, 0xE56B, ParseCmdIsEndOfArg_1000_E56B_01E56B);
+
+        // Resource-loader path — register under BOTH the cs1 (0x1000) and the
+        // loader (0x100D) framings so the C# resource layer runs consistently
+        // regardless of which segment the caller used (Tech/57 root cause).
         DefineFunction(cs1, 0xF2FC, StrcpyToFilenameBuf_1000_F2FC_01F2FC);
+        DefineFunction(LoaderCs, LoaderOff(0xF2FC), StrcpyToFilenameBuf_1000_F2FC_01F2FC);
         DefineFunction(cs1, 0xF0FF, BumpAllocate_1000_F0FF_01F0FF);
+        DefineFunction(LoaderCs, LoaderOff(0xF0FF), BumpAllocate_1000_F0FF_01F0FF);
         DefineFunction(cs1, 0xF11C, AllocCxPagesToDi_1000_F11C_01F11C);
+        DefineFunction(LoaderCs, LoaderOff(0xF11C), AllocCxPagesToDi_1000_F11C_01F11C);
         DefineFunction(cs1, 0xF13F, AllocatorAttemptToFreeSpace_1000_F13F_01F13F);
+        DefineFunction(LoaderCs, LoaderOff(0xF13F), AllocatorAttemptToFreeSpace_1000_F13F_01F13F);
         DefineFunction(cs1, 0xF403, HsqDecompressDsSiToEsDi_1000_F403_01F403);
+        DefineFunction(LoaderCs, LoaderOff(0xF403), HsqDecompressDsSiToEsDi_1000_F403_01F403);
         DefineFunction(cs1, 0xF314, LocateResByNameDsSi_1000_F314_01F314);
+        DefineFunction(LoaderCs, LoaderOff(0xF314), LocateResByNameDsSi_1000_F314_01F314);
         DefineFunction(cs1, 0xF2A7, SeekDuneDatToResDsDx_1000_F2A7_01F2A7);
+        DefineFunction(LoaderCs, LoaderOff(0xF2A7), SeekDuneDatToResDsDx_1000_F2A7_01F2A7);
         // DUNE.DAT I/O leaves: serve from the managed shim only when the host
         // archive was located+validated; otherwise leave the asm (emulated-DOS
         // INT 21) path in place so a working game is never regressed.
         if (_duneDat.IsAvailable) {
             DefineFunction(cs1, 0xF2D6, DuneDatSeek_1000_F2D6_01F2D6);
+            DefineFunction(LoaderCs, LoaderOff(0xF2D6), DuneDatSeek_1000_F2D6_01F2D6);
             DefineFunction(cs1, 0xF2EA, DuneDatRead_1000_F2EA_01F2EA);
+            DefineFunction(LoaderCs, LoaderOff(0xF2EA), DuneDatRead_1000_F2EA_01F2EA);
         } else {
             DefineFunction(cs1, 0xF2D6, "seek_dune_dat_offset_dxax_ida");
             DefineFunction(cs1, 0xF2EA, "read_dune_dat_cx_to_esdi_ida");

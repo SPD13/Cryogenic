@@ -249,10 +249,16 @@ public partial class Overrides : CSharpOverrideHelper {
 	/// driver segment allocation.
 	/// </remarks>
 	private void DefineDriversRemapping() {
-		DoOnTopOfInstruction(cs1, 0xE57B, () => {
-			DriverLoadToolbox.RemapDrivers(State, Memory);
-		});
-		DoOnTopOfInstruction(cs1, 0xE593, () => {
+		// The driver load+remap routine runs under the loader segment framing
+		// (CS=0x100D, = cs1+0xD; offset = cs1off-0xD0) on the real boot path —
+		// see Tech/57. Spice86 keys hooks by segment:offset, so register each
+		// driver-remap hook under BOTH framings or it silently misses on the
+		// loader path (why cs1:0xE593 never fired in the harness runs).
+		ushort loaderCs = (ushort)(cs1 + 0x000D);
+		Action remap = () => DriverLoadToolbox.RemapDrivers(State, Memory);
+		DoOnTopOfInstruction(cs1, 0xE57B, remap);
+		DoOnTopOfInstruction(loaderCs, (ushort)(0xE57B - 0x00D0), remap);
+		Action resetAndDump = () => {
 			DriverLoadToolbox.ResetAllocator(State, Memory);
 			// Phase 40 enablement: cs1:0xE593 is the `ret` ending the per-driver
 			// load+remap routine (sub_1044B). The driver just read in is resident
@@ -267,7 +273,9 @@ public partial class Overrides : CSharpOverrideHelper {
 			callsToE593++;
 			DumpMemoryWithSuffix("_" + ConvertUtils.ToHex16WithoutX(cs1) + "_E593_After_driver_load_pass_" +
 								 callsToE593);
-		});
+		};
+		DoOnTopOfInstruction(cs1, 0xE593, resetAndDump);
+		DoOnTopOfInstruction(loaderCs, (ushort)(0xE593 - 0x00D0), resetAndDump);
 	}
 
 	/// <summary>
@@ -279,8 +287,8 @@ public partial class Overrides : CSharpOverrideHelper {
 	/// eagerly at startup, not lazily.
 	/// </remarks>
 	private void DetectDriversEntryPoints() {
-		DoOnTopOfInstruction(cs1, 0xE589, () => {
-			DriverLoadToolbox.ReadDriverFunctionTable(State, Memory, this);
-		});
+		Action readTable = () => DriverLoadToolbox.ReadDriverFunctionTable(State, Memory, this);
+		DoOnTopOfInstruction(cs1, 0xE589, readTable);
+		DoOnTopOfInstruction((ushort)(cs1 + 0x000D), (ushort)(0xE589 - 0x00D0), readTable);
 	}
 }
