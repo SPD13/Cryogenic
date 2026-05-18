@@ -76,6 +76,88 @@ public partial class Overrides {
         DefineFunction(cs1, 0xC0E8, FarCall392DBpCE7A_1000_C0E8_01C0E8);
         DefineFunction(cs1, 0x8C8A, FlushPendingTextWrites_1000_8C8A_018C8A);
         DefineFunction(cs1, 0xD0E3, LookupKeyInCsTable_1000_D0E3_01D0E3);
+        DefineFunction(cs1, 0x7B0F, ResetThenSwapSiDiCallDfb8_1000_7B0F_017B0F);
+        DefineFunction(cs1, 0x9D94, EmitGlyphRunLoop_1000_9D94_019D94);
+    }
+
+    /// <summary>
+    /// cs1:0x7B0F — <c>sub_99DF</c>: <c>[0x46D8]=0; push si; xchg si,di;
+    /// call sub_DFB8; pop si</c> then falls through into the next proc
+    /// (cs1:0x7B1B). Zero compute beyond the head; modelled with the
+    /// near-call-continuation idiom because <c>sub_DFB8</c> (cs1:0xC0E8) is
+    /// a §A FarJump-returning port (call-and-discard-unsafe): set
+    /// <c>[0x46D8]=0</c>, push <c>si</c>, swap <c>si/di</c>, push the raw
+    /// continuation IP 0x7B1A (raw <c>pop si</c> → fall into the emulated
+    /// next proc), then <see cref="NearJump"/> to sub_DFB8.
+    /// </summary>
+    /// <remarks>Asm 11 B byte-verified vs cs1.bin@0x7B0F
+    /// (<c>C6 06 D8 46 00 56 87 F7 E8 CE 45 5E</c>): call sub_DFB8 @0x7B17
+    /// → 0xC0E8; continuation 0x7B1A (<c>5E pop si</c>); no retn.</remarks>
+    public Action ResetThenSwapSiDiCallDfb8_1000_7B0F_017B0F(int gotoAddress) {
+        UInt8[DS, 0x46D8] = 0;                          // mov byte ds:46D8h,0
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = SI;     // push si
+        ushort t = SI; SI = DI; DI = t;                 // xchg si,di
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0x7B1A; // push continuation (raw pop si; fall-through)
+        return NearJump(0xC0E8);                          // call sub_DFB8
+    }
+
+    /// <summary>
+    /// cs1:0x9D94 — <c>sub_BC64</c>. Per-glyph emit loop: reads a
+    /// <c>(count,dx,bx)</c> triple from <c>ds:si</c>, applies the
+    /// SS-relative world→screen transform
+    /// (<c>+[ss:1BF0/1BF2] -[ss:46D2/46D4] +[ss:47D4/47D6]</c>), reloads
+    /// <c>ds:si</c> from the vertex table (<c>lds si,ss:[0xDBB0]</c> indexed
+    /// by <c>bp</c>), fetches <c>di</c>/<c>cx</c>, then a §A SS-far
+    /// <c>call dword ptr ss:[0x38CD]</c> and loops. One C# invocation == one
+    /// iteration; the §A call uses the near-/far-call-continuation idiom
+    /// (push CS+raw cont IP 0x9DDF — which is <c>pop ds; pop si;
+    /// jmp sub_BC64</c> → re-enters this override), terminator byte 0 →
+    /// <see cref="NearRet"/> (locret_BC63 0x9D93 = <c>retn</c>).
+    /// </summary>
+    /// <remarks>
+    /// Asm byte-verified vs cs1.bin@0x9D94
+    /// (<c>AC 25 FF 00 74 F9 32 E4 8B E8 AC 8B D0 AC 8B D8 36 03 16 F0 1B
+    /// 36 03 1E F2 1B 36 2B 16 D2 46 36 2B 1E D4 46 36 03 16 D4 47
+    /// 36 03 1E D6 47 56 1E 4D 36 C5 36 B0 DB D1 E5 3E 03 32 AD 8B F8 AD
+    /// 32 E4 8B C8 BD D4 47 36 FF 1E CD 38 1F 5E EB B1</c>): far call
+    /// @0x9DDA, continuation @0x9DDF.
+    /// </remarks>
+    public Action EmitGlyphRunLoop_1000_9D94_019D94(int gotoAddress) {
+        byte count = UInt8[DS, SI]; SI = (ushort)(SI + 1);   // lodsb
+        AX = count;                                          // and ax,0FFh
+        if (count == 0) {                                    // jz locret_BC63
+            return NearRet();
+        }
+        BP = count;                                          // xor ah,ah ; mov bp,ax
+        byte b1 = UInt8[DS, SI]; SI = (ushort)(SI + 1);      // lodsb
+        DX = b1;                                             // mov dx,ax (ah=0)
+        byte b2 = UInt8[DS, SI]; SI = (ushort)(SI + 1);      // lodsb
+        BX = b2;                                             // mov bx,ax
+        DX = (ushort)(DX + UInt16[SS, 0x1BF0]);              // add dx,ss:[0x1BF0]
+        BX = (ushort)(BX + UInt16[SS, 0x1BF2]);              // add bx,ss:[0x1BF2]
+        DX = (ushort)(DX - UInt16[SS, 0x46D2]);              // sub dx,ss:[0x46D2]
+        BX = (ushort)(BX - UInt16[SS, 0x46D4]);              // sub bx,ss:[0x46D4]
+        DX = (ushort)(DX + UInt16[SS, 0x47D4]);              // add dx,ss:[0x47D4]
+        BX = (ushort)(BX + UInt16[SS, 0x47D6]);              // add bx,ss:[0x47D6]
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = SI;          // push si
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = DS;          // push ds
+        BP = (ushort)(BP - 1);                                // dec bp
+        ushort ldsSi = UInt16[SS, 0xDBB0];                   // lds si,ss:[0xDBB0]
+        DS = UInt16[SS, 0xDBB2];
+        SI = ldsSi;
+        BP = (ushort)(BP << 1);                               // shl bp,1
+        SI = (ushort)(SI + UInt16[DS, (ushort)(BP + SI)]);   // add si,ds:[bp+si]
+        ushort w0 = UInt16[DS, SI]; SI = (ushort)(SI + 2);   // lodsw
+        AX = w0; DI = w0;                                     // mov di,ax
+        ushort w1 = UInt16[DS, SI]; SI = (ushort)(SI + 2);   // lodsw
+        AX = (ushort)(w1 & 0x00FF);                           // xor ah,ah
+        CX = AX;                                              // mov cx,ax
+        BP = 0x47D4;                                          // mov bp,47D4h
+        ushort off = UInt16[SS, 0x38CD];                      // call dword ptr ss:[0x38CD]
+        ushort seg = UInt16[SS, 0x38CF];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0x9DDF;       // continuation (raw pop ds;pop si;jmp sub_BC64)
+        return FarJump(seg, off);
     }
 
     /// <summary>
