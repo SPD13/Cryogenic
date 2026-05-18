@@ -73,6 +73,10 @@ public sealed class HarnessHelper : CSharpOverrideHelper {
             InstallBootProbe();
         }
 
+        if (_options.StallSample) {
+            InstallStallSampler();
+        }
+
         // Harness-fwd diagnostic hooks. Passive — these run on top of
         // the native instruction and don't replace it. Used to localise
         // where the boot intro stalls under headless emulation.
@@ -287,6 +291,52 @@ public sealed class HarnessHelper : CSharpOverrideHelper {
                 : $"[bootprobe]   cs1:0x{off:X4}  first@{first,-12} hits={hits,-10} — {label}");
         }
         Console.Error.WriteLine("[bootprobe] ===== END SUMMARY =====");
+    }
+
+    // Stall-localiser (Tech/57): periodic CYCLES-breakpoint PC sampler.
+    private int _stallSamples;
+    private readonly Dictionary<uint, int> _stallPcHist = new();
+
+    private void InstallStallSampler() {
+        Console.Error.WriteLine(
+            $"[stall] sampler armed — every {_options.StallSampleInterval} cycles, " +
+            $"max {_options.StallSampleMax} samples (also bound the run with --StopAfterCycles)");
+        ScheduleNextStallSample((long)_options.StallSampleInterval);
+    }
+
+    private void ScheduleNextStallSample(long targetCycle) {
+        AddressBreakPoint bp = new(
+            BreakPointType.CPU_CYCLES,
+            targetCycle,
+            _ => OnStallSample(),
+            isRemovedOnTrigger: true);
+        EmulatorBreakpointsManager.ToggleBreakPoint(bp, on: true);
+    }
+
+    private void OnStallSample() {
+        _stallSamples++;
+        ushort cs = State.CS;
+        ushort ip = State.IP;
+        uint lin = (uint)((cs << 4) + ip);
+        _stallPcHist[lin] = _stallPcHist.TryGetValue(lin, out int c) ? c + 1 : 1;
+        Console.Error.WriteLine(
+            $"[stall] #{_stallSamples} cyc={State.Cycles} {cs:X4}:{ip:X4} (lin={lin:X5}) " +
+            $"ax={State.AX:X4} bx={State.BX:X4} cx={State.CX:X4} dx={State.DX:X4} " +
+            $"si={State.SI:X4} di={State.DI:X4} bp={State.BP:X4} " +
+            $"ds={State.DS:X4} es={State.ES:X4} ss={State.SS:X4} sp={State.SP:X4}");
+
+        if (_stallSamples >= _options.StallSampleMax) {
+            Console.Error.WriteLine("[stall] ===== TOP SAMPLED PCs (the spin loop) =====");
+            foreach (KeyValuePair<uint, int> kv in _stallPcHist
+                         .OrderByDescending(k => k.Value).Take(15)) {
+                Console.Error.WriteLine(
+                    $"[stall]   lin 0x{kv.Key:X5}  ×{kv.Value}");
+            }
+            Console.Error.WriteLine("[stall] ===== END (max samples reached) =====");
+            Exit();
+            return;
+        }
+        ScheduleNextStallSample(State.Cycles + (long)_options.StallSampleInterval);
     }
 
     private void OnCheckpointHit() {
