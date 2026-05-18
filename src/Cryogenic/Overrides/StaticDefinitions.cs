@@ -84,7 +84,7 @@ public partial class Overrides {
         // cs1:0xCA60 hnm_do_frame_ida — see VideoCode.cs (harness stub).
         DefineFunction(cs1, 0xCC96, "hnm_decode_video_frame_ida");
         // cs1:0xCD8F — real C# override in HnmCode.cs (HnmReadHeaderSize).
-        DefineFunction(cs1, 0xCDA0, "hnm_prepare_header_read_ida");
+        // cs1:0xCDA0 hnm_prepare_header_read_ida (sub_EC70) — real C# override in HnmCode.cs.
         // cs1:0xCE1A hnm_reset_ida — real C# override in HnmCode.cs (HnmReset).
         DefineFunction(cs1, 0xCE3B, "hnm_handle_pal_chunk_ida");
         DefineFunction(cs1, 0xCE6C, "initialize_memory_handler_ida");
