@@ -21,6 +21,7 @@ public partial class Overrides {
         DefineFunction(cs1, 0xABC6, ClearDc2B_1000_ABC6_01ABC6);
         DefineFunction(cs1, 0xA9A1, CloseFileHandle3821_1000_A9A1_01A9A1);
         DefineFunction(cs1, 0xD1BB, GlyphStreamProcessor_1000_D1BB_01D1BB);
+        DefineFunction(cs1, 0xD48A, RenderTextLineSetup_1000_D48A_01D48A);
     }
 
     /// <summary>
@@ -137,5 +138,105 @@ public partial class Overrides {
         SP = (ushort)(SP - 2);
         UInt16[SS, SP] = 0xD1CF;            // push near-return IP (raw `jmp 0xD1BB`)
         return NearJump(target);
+    }
+
+    /// <summary>
+    /// cs1:0xD48A — <c>sub_F35A</c>. Text-line render setup. Ports the full
+    /// head/compute/branch logic in C# — the framebuffer/font selection
+    /// (C# <see cref="SetTextBufferAsActiveFrameBuffer_1000_C08E_01C08E"/>,
+    /// <see cref="SetFrontBufferAsActiveFrameBuffer_1000_C07C_01C07C"/>,
+    /// <see cref="SetFontToMenu_1000_D075_01D075"/>), the
+    /// <c>di = cl*0x0E + 0x1B48</c> record address, the
+    /// <see cref="StoreDxBxToD82CD832_1000_D04E_01D04E"/> call, and the
+    /// <c>and si,0x3FFF</c> / <c>test ah,0x40</c> / <c>or ah,ah</c> /
+    /// <c>xchg al,[0xDBE5]</c> glyph-mode branch — then <see cref="NearJump"/>s
+    /// into the emulated call-tail (loc_F3AA cs1:0xD4DA, or loc_F3B9
+    /// cs1:0xD4E9 on the <c>si&amp;0x3FFF==0</c> path).
+    /// </summary>
+    /// <remarks>
+    /// The tail is delegated, not call-and-discarded, on purpose: it is four
+    /// consecutive continuation-hazard boundaries —
+    /// <c>call sub_EE40</c> (0xCF70 FetchSpriteRecord, has a
+    /// <c>push 0xCF7B; NearJump(0xD00F)</c> path), the near-indirect
+    /// <c>call word ptr ds:[0x2518]</c>, <c>call sub_F08B</c> (0xD1BB, the
+    /// iteration-via-redispatch loop override), then the tail far-indirect
+    /// <c>call dword ptr ds:[0x38DD]</c> — whose stack effects are only
+    /// faithful when run through the real emulated stream (same proven
+    /// technique as <c>sub_A77F</c>'s loc_A79A). The entry
+    /// <c>push word ptr ds:[0xDBDA]</c> is done here on the emulated stack;
+    /// the delegated tail's <c>pop word ptr ds:[0xDBDA]; retn</c> balances it.
+    /// Asm (~128 B), byte-verified vs cs1.bin@0xD48A. Continuation map:
+    /// EE40 call@0xD4DD, [0x2518]@0xD4E2, F08B call@0xD4E6, loc_F3B9=0xD4E9,
+    /// far[0x38DD]@0xD506, pop/ret@0xD50A; loc_F3AA=0xD4DA.
+    /// <code>
+    /// D48A: FF 36 DA DB    push word ptr ds:0DBDAh
+    /// D48E: E8 ..          call sub_DF5E (0xC08E)
+    /// D491: 80 3E E6 DC 00 cmp byte ds:0DCE6h,0
+    /// D496: 7E 03          jle loc_F36B
+    /// D498: E8 ..          call sub_DF4C (0xC07C)
+    /// D49B: E8 ..          call sub_EF45 (0xD075)        ; loc_F36B
+    /// D49E: 8B F0          mov si,ax
+    /// D4A0: B0 0E          mov al,0Eh
+    /// D4A2: F6 E1          mul cl
+    /// D4A4: 8B F8          mov di,ax
+    /// D4A6: 81 C7 48 1B    add di,1B48h
+    /// D4AA: 8B 5D 02       mov bx,[di+2]
+    /// D4AD: 43             inc bx
+    /// D4AE: BA 5D 00       mov dx,5Dh
+    /// D4B1: E8 ..          call sub_EF1E (0xD04E)
+    /// D4B4: C6 06 E5 DB F3 mov byte ds:0DBE5h,0F3h
+    /// D4B9: 80 65 08 7F    and byte [di+8],7Fh
+    /// D4BD: 8B C6          mov ax,si
+    /// D4BF: 81 E6 FF 3F    and si,3FFFh
+    /// D4C3: 74 24          jz loc_F3B9 (0xD4E9)
+    /// D4C5: B0 F5          mov al,0F5h
+    /// D4C7: F6 C4 40       test ah,40h
+    /// D4CA: 75 0E          jnz loc_F3AA (0xD4DA)
+    /// D4CC: 80 4D 08 80    or byte [di+8],80h
+    /// D4D0: B0 FA          mov al,0FAh
+    /// D4D2: 0A E4          or ah,ah
+    /// D4D4: 79 04          jns loc_F3AA (0xD4DA)
+    /// D4D6: 86 06 E5 DB    xchg al,ds:0DBE5h
+    /// D4DA: loc_F3AA  (emulated tail begins: mov [0xDBE4],al; call EE40; ...)
+    /// </code>
+    /// </remarks>
+    public Action RenderTextLineSetup_1000_D48A_01D48A(int gotoAddress) {
+        SP = (ushort)(SP - 2);                        // push word ptr ds:0DBDAh
+        UInt16[SS, SP] = UInt16[DS, 0xDBDA];
+        SetTextBufferAsActiveFrameBuffer_1000_C08E_01C08E(0);   // call sub_DF5E
+        if ((sbyte)UInt8[DS, 0xDCE6] > 0) {           // cmp byte [0xDCE6],0 ; jle loc_F36B
+            SetFrontBufferAsActiveFrameBuffer_1000_C07C_01C07C(0);   // call sub_DF4C
+        }
+        SetFontToMenu_1000_D075_01D075(0);            // loc_F36B: call sub_EF45
+        SI = AX;                                       // mov si,ax
+        AL = 0x0E;                                     // mov al,0Eh
+        AX = (ushort)(0x0E * CL);                      // mul cl  (AX = AL*CL)
+        DI = (ushort)(AX + 0x1B48);                    // mov di,ax ; add di,1B48h
+        BX = (ushort)(UInt16[DS, (ushort)(DI + 2)] + 1);   // mov bx,[di+2] ; inc bx
+        DX = 0x005D;                                   // mov dx,5Dh
+        StoreDxBxToD82CD832_1000_D04E_01D04E(0);       // call sub_EF1E
+        UInt8[DS, 0xDBE5] = 0xF3;                       // mov byte [0xDBE5],0F3h
+        UInt8[DS, (ushort)(DI + 8)] =
+            (byte)(UInt8[DS, (ushort)(DI + 8)] & 0x7F); // and byte [di+8],7Fh
+        ushort origSi = SI;                            // mov ax,si
+        AX = origSi;
+        SI = (ushort)(SI & 0x3FFF);                    // and si,3FFFh
+        if (SI == 0) {                                 // jz loc_F3B9
+            return NearJump(0xD4E9);
+        }
+        AL = 0xF5;                                     // mov al,0F5h
+        if ((AH & 0x40) != 0) {                        // test ah,40h ; jnz loc_F3AA
+            return NearJump(0xD4DA);
+        }
+        UInt8[DS, (ushort)(DI + 8)] =
+            (byte)(UInt8[DS, (ushort)(DI + 8)] | 0x80); // or byte [di+8],80h
+        AL = 0xFA;                                     // mov al,0FAh
+        if ((AH & 0x80) == 0) {                        // or ah,ah ; jns loc_F3AA
+            return NearJump(0xD4DA);
+        }
+        byte tmp = UInt8[DS, 0xDBE5];                  // xchg al,ds:0DBE5h
+        UInt8[DS, 0xDBE5] = AL;
+        AL = tmp;
+        return NearJump(0xD4DA);                        // loc_F3AA (emulated tail)
     }
 }
