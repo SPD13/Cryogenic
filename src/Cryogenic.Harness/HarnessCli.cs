@@ -150,6 +150,17 @@ public static class HarnessCli {
                 case "--boot-probe":
                     opt.BootProbe = true;
                     break;
+                case "--stall-sample":
+                    opt.StallSample = true;
+                    break;
+                case "--stall-sample-interval":
+                    if (next is null) {
+                        throw new ArgumentException("--stall-sample-interval requires a cycle count");
+                    }
+                    opt.StallSample = true;
+                    opt.StallSampleInterval = ulong.Parse(next);
+                    i++;
+                    break;
                 case "--boot-probe-cap":
                     if (next is null) {
                         throw new ArgumentException("--boot-probe-cap requires a cycle count");
@@ -188,6 +199,12 @@ public static class HarnessCli {
         forwarded.Add("--UseCodeOverride=true");
         forwarded.Add("--HeadlessMode=Minimal");
         forwarded.Add("--GdbPort=0");
+        //   NOTE: Spice86's HTTP API/MCP servers bind ports 20000/8081. A
+        //   harness binary that lingers (force-killed `dotnet run` leaves the
+        //   inner Cryogenic.Harness process alive) keeps them bound and the
+        //   next run aborts with "address already in use". `--HttpApiPort=0`
+        //   does NOT fix this (Spice86 rejects dynamic-port-on-localhost);
+        //   the correct remedy is `pkill -9 -f Cryogenic.Harness` between runs.
         string spice86Dir = Path.Combine(opt.OutputPath, "_spice86");
         Directory.CreateDirectory(spice86Dir); // Cryogenic project's own dumps need this to exist.
         forwarded.Add($"--RecordedDataDirectory={spice86Dir}");

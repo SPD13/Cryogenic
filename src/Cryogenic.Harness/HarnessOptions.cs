@@ -134,6 +134,22 @@ public sealed class HarnessOptions {
 
     /// <summary>Cycle at which the boot-probe forces a summary + exit (default 60M — past the ~26M where the intro spin begins).</summary>
     public ulong BootProbeCycleCap { get; set; } = 60_000_000;
+
+    /// <summary>
+    /// Stall-localiser (Tech/57). Arms a periodic <c>BreakPointType.CYCLES</c>
+    /// breakpoint at emulation start (NOT checkpoint-gated); each firing logs
+    /// the interrupted <c>CS:IP</c> + regs — a sampling profiler that pinpoints
+    /// where the engine spins regardless of which loop it's in. Bound the run
+    /// with the forwarded Spice86 <c>--StopAfterCycles N</c> and/or
+    /// <see cref="StallSampleMax"/>. Read-only.
+    /// </summary>
+    public bool StallSample { get; set; } = false;
+
+    /// <summary>Cycles between PC samples (default 25k).</summary>
+    public ulong StallSampleInterval { get; set; } = 25_000;
+
+    /// <summary>Exit after this many samples (default 400 ≈ 10M cycles at 25k).</summary>
+    public int StallSampleMax { get; set; } = 400;
 }
 
 public enum HarnessMode {
