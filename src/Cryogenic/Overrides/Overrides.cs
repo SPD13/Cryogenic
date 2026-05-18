@@ -181,6 +181,7 @@ public partial class Overrides : CSharpOverrideHelper {
 		DefineVerbHelpersCodeOverrides();           // Phase 27: verb-13/verb-8 helper quick-wins
 		DefineChainC13ECodeOverrides();             // Phase 27: 0xC13E deep-chain campaign
 		DefineChain5DCECodeOverrides();             // Phase 27: 0x5DCE deep-chain campaign
+		DefineVerb13HandlerCodeOverrides();         // Phase 27: verb-13 dispatch handler sub_6DDC
 
 		DefineDriversRemapping();
 		DetectDriversEntryPoints();

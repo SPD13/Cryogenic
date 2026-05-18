@@ -621,6 +621,100 @@ public partial class Overrides {
     }
 
     /// <summary>
+    /// Registers the verb-13 dispatch-handler overrides — <c>sub_6DDC</c>
+    /// (cs1:0x4F0C) and its small scoped callees. The handler's full
+    /// transitive chain is ~203 nodes (it is a top-level verb dispatcher
+    /// that fans into most engine subsystems), so it is <b>not</b> a
+    /// closeable bounded campaign: the handler is ported head-port +
+    /// emulated-tail-delegation (the uniform exact pattern) and its callee
+    /// web stays correctly-emulated asm — the documented hard-residue
+    /// reality, exact via the emulator.
+    /// </summary>
+    public void DefineVerb13HandlerCodeOverrides() {
+        DefineFunction(cs1, 0x4F0C, Verb13Dispatch_1000_4F0C_014F0C);
+        DefineFunction(cs1, 0x5B5D, StoreBxDxTo197x_1000_5B5D_015B5D);
+        DefineFunction(cs1, 0x49D9, Verb13IndirectGate_1000_49D9_0149D9);
+        DefineFunction(cs1, 0x2E52, SceneSetupThenChunk_1000_2E52_012E52);
+    }
+
+    /// <summary>
+    /// cs1:0x4F0C — <c>sub_6DDC</c>, the <b>verb-13 dispatch handler</b>
+    /// (L106 + 3 FUNCTION CHUNKs). Guard head ported in C#:
+    /// <c>[0x4727]==0</c> or <c>[0x11CA]!=0</c> → return
+    /// (<c>locret_6E03</c> 0x4F33 = <c>retn</c>); else <c>[0x1C06]=0x80</c>
+    /// and the call-heavy dispatch body (cs1:0x4F20 onward —
+    /// <c>sub_E930</c>, the verb sub-handlers, the chunks) is delegated to
+    /// the emulated stream via <see cref="NearJump"/>(0x4F20). The ~203-node
+    /// callee web is intentionally left emulated (exact; not a campaign).
+    /// </summary>
+    /// <remarks>Asm head byte-verified vs cs1.bin@0x4F0C
+    /// (<c>80 3E 27 47 00 74 20 80 3E CA 11 00 75 19 C7 06 06 1C 80 00
+    /// B8 EC DB 50 ...</c>): jz/jnz +0x20/+0x19 → locret_6E03 0x4F33;
+    /// body @0x4F20.</remarks>
+    public Action Verb13Dispatch_1000_4F0C_014F0C(int gotoAddress) {
+        if (UInt8[DS, 0x4727] == 0) {                      // cmp byte ds:4727h,0 ; jz locret_6E03
+            return NearJump(0x4F33);
+        }
+        if (UInt8[DS, 0x11CA] != 0) {                      // cmp byte ds:11CAh,0 ; jnz locret_6E03
+            return NearJump(0x4F33);
+        }
+        UInt16[DS, 0x1C06] = 0x0080;                        // mov word ds:1C06h,80h
+        return NearJump(0x4F20);                            // ax=0DBECh; push ax; call sub_E930; ... (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0x5B5D — <c>sub_7A2D</c>. <c>call sub_5F4E</c> then
+    /// <c>loc_7A30: [0x197E]=bx; [0x197C]=dx; retn</c>. First op is the
+    /// call; <c>sub_5F4E</c> (cs1:0x407E) has a NearJump path so it is
+    /// modelled with the call-continuation idiom: push the raw post-call IP
+    /// 0x5B60 (the shared <c>loc_7A30</c> store/retn — also the target of
+    /// the already-ported <c>sub_7A25</c>), <see cref="NearJump"/> to
+    /// sub_5F4E.
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0x5B5D
+    /// (<c>E8 1E E5 89 1E 7E 19 89 16 7C 19 C3</c>): call sub_5F4E @0x5B5D
+    /// → 0x407E, continuation/loc_7A30 @0x5B60.</remarks>
+    public Action StoreBxDxTo197x_1000_5B5D_015B5D(int gotoAddress) {
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0x5B60;   // call sub_5F4E (cont = raw loc_7A30)
+        return NearJump(0x407E);
+    }
+
+    /// <summary>
+    /// cs1:0x49D9 — <c>sub_68A9</c>. Verb-13 indirect gate: if
+    /// <c>[0x46EB] &lt; 0</c> (signed) jump through the dispatch slot
+    /// <c>word ptr ds:[0x46ED]</c> (<c>loc_68B6</c> 0x49E6); else
+    /// <c>call sub_6870; jmp sub_692A</c> (cs1:0x49E0). The sign-test head
+    /// is ported in C#; both targets (the indirect <c>jmp</c> and the
+    /// <c>call sub_6870</c>/<c>jmp sub_692A</c> pair) are delegated to the
+    /// emulated stream via <see cref="NearJump"/>.
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0x49D9
+    /// (<c>80 3E EB 46 00 78 06 E8 BD FF EB 75 90 FF 26 ED 46</c>):
+    /// js +6 → loc_68B6 0x49E6.</remarks>
+    public Action Verb13IndirectGate_1000_49D9_0149D9(int gotoAddress) {
+        if ((sbyte)UInt8[DS, 0x46EB] < 0) {                // cmp byte ds:46EBh,0 ; js loc_68B6
+            return NearJump(0x49E6);                         // jmp word ptr ds:[0x46ED] (emulated)
+        }
+        return NearJump(0x49E0);                            // call sub_6870 ; jmp sub_692A (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0x2E52 — <c>sub_4D22</c> (L36 + FUNCTION CHUNK @0x3723), a
+    /// verb-13 scene-setup sub-handler whose first op is
+    /// <c>call sub_547D</c> (cs1:0x35AD — a large still-asm orchestrator).
+    /// No portable head; modelled with the call-continuation idiom: push
+    /// the raw post-call IP 0x2E55, <see cref="NearJump"/> to sub_547D;
+    /// the rest of sub_4D22 + its chunk run in the emulated stream.
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0x2E52
+    /// (<c>E8 58 07 A1 7A CE A3 5A DC ...</c>): call sub_547D @0x2E52 →
+    /// 0x35AD, continuation @0x2E55.</remarks>
+    public Action SceneSetupThenChunk_1000_2E52_012E52(int gotoAddress) {
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0x2E55;   // call sub_547D (cont = raw rest+chunk)
+        return NearJump(0x35AD);
+    }
+
+    /// <summary>
     /// Registers the Phase-27 verb-13 / verb-8 helper quick-win overrides.
     /// </summary>
     public void DefineVerbHelpersCodeOverrides() {
