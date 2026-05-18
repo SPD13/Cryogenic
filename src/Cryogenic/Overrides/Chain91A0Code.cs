@@ -367,6 +367,147 @@ public partial class Overrides {
     }
 
     /// <summary>
+    /// Registers the <c>cs1:0x5DCE</c> (<c>sub_7C9E</c>) deep-chain campaign
+    /// overrides (9-node bounded subtree, the final verb-13 cluster item;
+    /// <c>tools/chain_tree.py</c>).
+    /// </summary>
+    public void DefineChain5DCECodeOverrides() {
+        DefineFunction(cs1, 0x62C9, IsRecordVisibleGate_1000_62C9_0162C9);
+        DefineFunction(cs1, 0x62D6, PointInClipRect_1000_62D6_0162D6);
+        DefineFunction(cs1, 0x63C7, SpriteCellDispatch_1000_63C7_0163C7);
+        DefineFunction(cs1, 0x7C8F, ScaledDistanceClamp_1000_7C8F_017C8F);
+        DefineFunction(cs1, 0x7C93, ScaledDistanceClampCont_1000_7C93_017C93);
+    }
+
+    /// <summary>
+    /// cs1:0x62C9 — <c>sub_8199</c>. If <c>[0x46EB] == 0</c> returns
+    /// out-of-bounds (CF=1, <c>locret_81C1</c> 0x62F1 = <c>retn</c>);
+    /// otherwise loads <c>dx=[si+2]; bx=[si+4]</c> and falls through into
+    /// <c>sub_81A6</c> (cs1:0x62D6) — modelled by
+    /// <see cref="NearJump"/>(0x62D6) so the C#
+    /// <see cref="PointInClipRect_1000_62D6_0162D6"/> override dispatches.
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0x62C9
+    /// (<c>80 3E EB 46 01 72 21 8B 54 02 8B 5C 04</c>): <c>jb</c> (CF=1)
+    /// → locret_81C1 0x62F1; falls into sub_81A6 @0x62D6.</remarks>
+    public Action IsRecordVisibleGate_1000_62C9_0162C9(int gotoAddress) {
+        if (UInt8[DS, 0x46EB] < 1) {                       // cmp byte ds:46EBh,1 ; jb locret_81C1
+            CarryFlag = true;
+            return NearRet();                               // locret_81C1 0x62F1
+        }
+        DX = UInt16[DS, (ushort)(SI + 2)];                 // mov dx,[si+2]
+        BX = UInt16[DS, (ushort)(SI + 4)];                 // mov bx,[si+4]
+        return NearJump(0x62D6);                            // fall into sub_81A6
+    }
+
+    /// <summary>
+    /// cs1:0x62D6 — <c>sub_81A6</c>. Point-in-clip-rect predicate: runs
+    /// <see cref="WorldToScreenScale_1000_B647_1B647"/> (sub_D517 —
+    /// NearRet-inline, call-and-discard-safe) then returns CF=0 iff
+    /// <c>[0x46E3] &lt;= dx &lt; [0x46E7]</c> and
+    /// <c>[0x46E5] &lt;= bx &lt; [0x46E9]</c>, CF=1 otherwise
+    /// (<c>locret_81C1</c> 0x62F1 = <c>retn</c>). Fully ported.
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0x62D6
+    /// (<c>E8 6E 53 3B 16 E3 46 72 12 3B 16 E7 46 F5 72 0B
+    /// 3B 1E E5 46 72 05 3B 1E E9 46 F5 C3</c>): the
+    /// <c>cmp/cmc/jb</c> chain — CF of the final <c>cmp bx,[0x46E9]; cmc</c>
+    /// is the in/out result.</remarks>
+    public Action PointInClipRect_1000_62D6_0162D6(int gotoAddress) {
+        WorldToScreenScale_1000_B647_1B647(0);             // call sub_D517 (NearRet-safe)
+        bool cf;
+        if (DX < UInt16[DS, 0x46E3]) cf = true;            // cmp dx,[0x46E3]; jb (CF=1)
+        else if (DX >= UInt16[DS, 0x46E7]) cf = true;      // cmp dx,[0x46E7]; cmc; jb (dx>=hi -> CF=1)
+        else if (BX < UInt16[DS, 0x46E5]) cf = true;       // cmp bx,[0x46E5]; jb (CF=1)
+        else cf = !(BX < UInt16[DS, 0x46E9]);              // cmp bx,[0x46E9]; cmc -> CF=!(bx<hi)
+        CarryFlag = cf;
+        return NearRet();                                   // locret_81C1
+    }
+
+    /// <summary>
+    /// cs1:0x63C7 — <c>sub_8297</c>. Sprite-cell dispatch: saves 6 regs,
+    /// picks <c>ax=0x78</c>/<c>0x79</c> by <c>ah==0x10</c>, folds
+    /// <c>di</c>/<c>bp</c> into <c>bx</c>/<c>dx</c>, then the §A
+    /// <c>call sub_E213</c> (cs1:0xC343 — FarJump, call-and-discard-unsafe)
+    /// and restores the 6 regs. The 6-reg save + the index compute are
+    /// ported in C#; <c>call sub_E213; pop×6; retn</c> is delegated to the
+    /// emulated stream via <see cref="NearJump"/>(0x63E6) (the pushes are
+    /// balanced by the emulated pops).
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0x63C7
+    /// (<c>53 52 56 57 55 06 80 FC 10 B8 78 00 75 01 40 03 EF 83 E7 03
+    /// D1 ED D1 ED 83 E5 03 03 DF 03 D5 E8 5A 5F 07 5D 5F 5E 5A 5B C3</c>):
+    /// call sub_E213 @0x63E6, continuation @0x63E9.</remarks>
+    public Action SpriteCellDispatch_1000_63C7_0163C7(int gotoAddress) {
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = BX;       // push bx
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = DX;       // push dx
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = SI;       // push si
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = DI;       // push di
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = BP;       // push bp
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = ES;       // push es
+        ushort ax = 0x0078;                                 // mov ax,78h
+        if (AH == 0x10) {                                   // cmp ah,10h ; jnz loc_82A6
+            ax = 0x0079;                                    // inc ax
+        }
+        AX = ax;
+        BP = (ushort)(BP + DI);                             // add bp,di
+        DI = (ushort)(DI & 0x0003);                         // and di,3
+        BP = (ushort)(BP >> 1);                             // shr bp,1
+        BP = (ushort)(BP >> 1);                             // shr bp,1
+        BP = (ushort)(BP & 0x0003);                         // and bp,3
+        BX = (ushort)(BX + DI);                             // add bx,di
+        DX = (ushort)(DX + BP);                             // add dx,bp
+        return NearJump(0x63E6);                            // call sub_E213; pop×6; retn (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0x7C8F — <c>sub_9B5F</c> entry. Models <c>push si;
+    /// call sub_5F4E</c> (cs1:0x407E — has a NearJump path so
+    /// call-and-discard is unsafe) with the call-continuation idiom: push
+    /// <c>si</c>, push the post-call IP 0x7C93, <see cref="NearJump"/> to
+    /// sub_5F4E; the pure-compute tail is
+    /// <see cref="ScaledDistanceClampCont_1000_7C93_017C93"/>.
+    /// </summary>
+    /// <remarks>Asm: <c>7C8F: 56 push si | 7C90: E8 EB C3 call sub_5F4E
+    /// (0x407E)</c> (byte-verified cs1.bin@0x7C8F); continuation 0x7C93.</remarks>
+    public Action ScaledDistanceClamp_1000_7C8F_017C8F(int gotoAddress) {
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = SI;       // push si
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0x7C93;   // call sub_5F4E (cont)
+        return NearJump(0x407E);
+    }
+
+    /// <summary>
+    /// cs1:0x7C93 — continuation of <see cref="ScaledDistanceClamp_1000_7C8F_017C8F"/>
+    /// after <c>sub_5F4E</c>. Pure-compute: <c>bp = |bx*2|</c> →
+    /// <c>[bp+0x4880]</c> scale; <c>ax = |[si+2]-dx| / bp</c> (16-bit
+    /// <c>div bp</c>); clamps <c>ax</c> to <c>|bx-[si+4]|</c>
+    /// (<c>min</c>); returns (<c>locret_9B8A</c> 0x7CBA = <c>retn</c>).
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0x7C93
+    /// (<c>5E 8B EB D1 E5 79 02 F7 DD 8B AE 80 48 8B 44 02 2B C2 79 02
+    /// F7 D8 33 D2 F7 F5 2B 5C 04 79 02 F7 DB 3B C3 73 02 8B C3 C3</c>):
+    /// <c>jns</c> = skip <c>neg</c> when non-negative (signed abs).</remarks>
+    public Action ScaledDistanceClampCont_1000_7C93_017C93(int gotoAddress) {
+        SI = UInt16[SS, SP]; SP = (ushort)(SP + 2);        // pop si
+        short bp = (short)(BX << 1);                        // mov bp,bx ; shl bp,1
+        if (bp < 0) bp = (short)-bp;                        // jns loc_9B6C ; neg bp
+        BP = UInt16[DS, (ushort)((ushort)bp + 0x4880)];     // mov bp,[bp+4880h]
+        short ax = (short)(UInt16[DS, (ushort)(SI + 2)] - DX); // mov ax,[si+2] ; sub ax,dx
+        if (ax < 0) ax = (short)-ax;                        // jns loc_9B79 ; neg ax
+        DX = 0;                                              // xor dx,dx
+        ushort q = (ushort)((ushort)ax / BP);               // div bp
+        DX = (ushort)((ushort)ax % BP);
+        AX = q;
+        short bx = (short)(BX - UInt16[DS, (ushort)(SI + 4)]); // sub bx,[si+4]
+        if (bx < 0) bx = (short)-bx;                         // jns loc_9B84 ; neg bx
+        BX = (ushort)bx;
+        if (AX < (ushort)bx) {                               // cmp ax,bx ; jnb locret_9B8A
+            AX = (ushort)bx;                                 // mov ax,bx
+        }
+        return NearRet();                                    // locret_9B8A
+    }
+
+    /// <summary>
     /// Registers the Phase-27 verb-13 / verb-8 helper quick-win overrides.
     /// </summary>
     public void DefineVerbHelpersCodeOverrides() {
