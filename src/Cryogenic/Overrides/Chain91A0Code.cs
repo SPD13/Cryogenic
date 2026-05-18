@@ -74,6 +74,98 @@ public partial class Overrides {
     public void DefineChain8B11CodeOverrides() {
         DefineFunction(cs1, 0x9046, GridScanPatchSetup_1000_9046_019046);
         DefineFunction(cs1, 0xC0E8, FarCall392DBpCE7A_1000_C0E8_01C0E8);
+        DefineFunction(cs1, 0x8C8A, FlushPendingTextWrites_1000_8C8A_018C8A);
+        DefineFunction(cs1, 0xD0E3, LookupKeyInCsTable_1000_D0E3_01D0E3);
+    }
+
+    /// <summary>
+    /// cs1:0x8C8A — <c>sub_AB5A</c>. Take-and-clear <c>[0x479E]</c>; if it
+    /// was &lt; 2 return (<c>locret_AB9C</c> 0x8CCC = <c>retn</c>); else
+    /// <c>si=0x1470</c> and branch on <c>[0x28E7]</c>: zero → loc_AB85
+    /// (cs1:0x8CB5), non-zero → the <c>[0x28E7]</c> path
+    /// (cs1:0x8C9F: <c>bp=0x1BE2; si=0x4C60; es=[0xDBDE];
+    /// call dword ptr ds:[0x391D]; ...; loc_AB85</c>). The head decision is
+    /// ported in C#; both tails are delegated to the emulated stream via
+    /// <see cref="NearJump"/> because they contain a §A far-indirect
+    /// <c>[0x391D]</c> and the continuation-unsafe C# calls
+    /// <c>sub_E316</c>/0xC446 (FarJump path), <c>sub_BA7C</c>/0x9BAC
+    /// (push-cont+NearJump) and <c>sub_E3AD</c>/0xC4DD (NearJump) — all
+    /// faithful only through real emulated calls.
+    /// </summary>
+    /// <remarks>
+    /// Asm head byte-verified vs cs1.bin@0x8C8A
+    /// (<c>33 C0 87 06 9E 47 3D 02 00 72 37 BE 70 14 80 3E E7 28 00 74 16</c>):
+    /// <c>jb +0x37</c> → locret_AB9C 0x8CCC; <c>jz +0x16</c> → loc_AB85
+    /// 0x8CB5; the §A branch begins 0x8C9F.
+    /// </remarks>
+    public Action FlushPendingTextWrites_1000_8C8A_018C8A(int gotoAddress) {
+        ushort old = UInt16[DS, 0x479E];                // xor ax,ax ; xchg ax,ds:479Eh
+        UInt16[DS, 0x479E] = 0;
+        AX = old;
+        if (old < 2) {                                  // cmp ax,2 ; jb locret_AB9C
+            return NearRet();
+        }
+        SI = 0x1470;                                    // mov si,1470h
+        if (UInt8[DS, 0x28E7] == 0) {                   // cmp byte ds:28E7h,0 ; jz loc_AB85
+            return NearJump(0x8CB5);                     // loc_AB85 (emulated)
+        }
+        return NearJump(0x8C9F);                          // [0x28E7] §A branch (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0xD0E3 — <c>sub_EFB3</c>. Scans the 9-byte CS-resident key table
+    /// at <c>cs:0xD0D1</c> for <c>al</c> (<c>repne scasb</c>, single fixed
+    /// pass — no loop-back, so no ZF-persistence subtlety) and, on a hit,
+    /// returns <c>al = cs:[di+8]</c> (the parallel value table) and
+    /// <c>ah = 0x0D - cl</c>. CF = 1 on miss (the <c>stc</c>); on hit CF is
+    /// the borrow of <c>sub ah,cl</c>. Fully ported (self-contained leaf,
+    /// no calls).
+    /// </summary>
+    /// <remarks>
+    /// Asm byte-verified vs cs1.bin@0xD0E3
+    /// (<c>51 57 06 0E 07 BF D1 D0 B9 09 00 F2 AE 07 F9 75 08
+    /// 2E 8A 45 08 B4 0D 2A E1 5F 59 C3</c>):
+    /// <code>
+    /// D0E3: 51 57 06        push cx ; push di ; push es
+    /// D0E6: 0E 07           push cs ; pop es     (es = cs = cs1)
+    /// D0E8: BF D1 D0        mov di,0D0D1h
+    /// D0EB: B9 09 00        mov cx,9
+    /// D0EE: F2 AE           repne scasb
+    /// D0F0: 07              pop es
+    /// D0F1: F9              stc
+    /// D0F2: 75 08           jnz loc_EFCC (0xD0FC)
+    /// D0F4: 2E 8A 45 08     mov al,cs:[di+8]
+    /// D0F8: B4 0D           mov ah,0Dh
+    /// D0FA: 2A E1           sub ah,cl
+    /// D0FC: 5F 59 C3        pop di ; pop cx ; retn   (loc_EFCC)
+    /// </code>
+    /// </remarks>
+    public Action LookupKeyInCsTable_1000_D0E3_01D0E3(int gotoAddress) {
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = CX;     // push cx
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = DI;     // push di
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = ES;     // push es
+        ES = CS;                                         // push cs ; pop es  (= cs1)
+        DI = 0xD0D1;                                      // mov di,0D0D1h
+        CX = 9;                                           // mov cx,9
+        byte al = AL;
+        bool found = false;                               // repne scasb
+        while (CX != 0) {
+            byte t = UInt8[ES, DI];
+            DI = (ushort)(DI + 1);
+            CX = (ushort)(CX - 1);
+            if (al == t) { found = true; break; }
+        }
+        ES = UInt16[SS, SP]; SP = (ushort)(SP + 2);      // pop es
+        CarryFlag = true;                                 // stc
+        if (found) {                                      // jnz loc_EFCC (taken when NOT found)
+            AL = UInt8[cs1, (ushort)(DI + 8)];           // mov al,cs:[di+8]
+            byte cl = CL;
+            AH = (byte)(0x0D - cl);                       // mov ah,0Dh ; sub ah,cl
+            CarryFlag = 0x0D < cl;                         //   CF = borrow
+        }
+        DI = UInt16[SS, SP]; SP = (ushort)(SP + 2);      // loc_EFCC: pop di
+        CX = UInt16[SS, SP]; SP = (ushort)(SP + 2);      // pop cx
+        return NearRet();                                 // retn
     }
 
     /// <summary>
