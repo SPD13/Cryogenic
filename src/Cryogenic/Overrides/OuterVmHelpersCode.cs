@@ -40,6 +40,84 @@ public partial class Overrides {
         DefineFunction(cs1, 0x9123, ComputeTopicSlotFromAL_1000_9123_019123);
         DefineFunction(cs1, 0x9025, SetupAndIndirectFar38C9_1000_9025_019025);
         DefineFunction(cs1, 0x8944, ExpandDialogueMacroString_1000_8944_018944);
+        DefineFunction(cs1, 0x2EBF, SetupBpFrom2220Bx0F66ThenJmpD338_1000_2EBF_012EBF);
+        DefineFunction(cs1, 0x88AF, SetActiveScriptRecord_1000_88AF_0188AF);
+    }
+
+    /// <summary>
+    /// Override for cs1:0x88AF — <c>sub_A77F</c>. Sets the active script /
+    /// dialogue record from <c>AX</c>: a null <c>AX</c> is a no-op return
+    /// (<c>jz nullsub_8</c>); otherwise it stores the record at
+    /// <c>ds:0x4780</c> and clears the flag byte <c>ds:0x47E0</c>. If
+    /// <c>ds:0x46EB</c> bit 6 (0x40) is set it clears that bit and
+    /// tail-jumps to <c>sub_9FAF</c> (cs1:0x80DF); otherwise it enters
+    /// <c>loc_A79A</c> (cs1:0x88CA) which does
+    /// <c>si=ax; call sub_EE40; call sub_A7C1</c> and falls through into
+    /// <c>sub_A7A2</c> (cs1:0x88D2).
+    /// </summary>
+    /// <remarks>
+    /// Only the entry branching logic is ported; the <c>loc_A79A</c> tail is
+    /// delegated to the original emulated instruction stream via
+    /// <see cref="NearJump"/> (same technique as the "still-asm body"
+    /// tail-jumps elsewhere in this class). This is deliberate and exact:
+    /// <c>sub_EE40</c> (cs1:0xCF70, <see cref="FetchSpriteRecord_1000_CF70_01CF70"/>)
+    /// has a <c>push 0xCF7B; NearJump(0xD00F)</c> continuation path whose
+    /// stack effects can only be reproduced faithfully when reached through a
+    /// real emulated <c>call</c> — a plain call-and-discard from here would
+    /// drop that path's continuation. Re-entering at <c>loc_A79A</c> lets
+    /// Spice86 dispatch <c>call sub_EE40</c>, <c>call sub_A7C1</c> and the
+    /// <c>sub_A7A2</c> fall-through exactly as the binary does.
+    /// Asm (35 B), byte-verified against cs1.bin@0x88AF
+    /// (<c>0B C0 74 FB A3 80 47 C6 06 E0 47 00 F6 06 EB 46 40 74 08
+    /// 80 26 EB 46 BF E9 15 F8 ...</c>):
+    /// <code>
+    /// A77F: 0B C0          or  ax, ax
+    /// A781: 74 FB          jz  nullsub_8        ; AX==0 -> retn
+    /// A783: A3 80 47       mov ds:4780h, ax
+    /// A786: C6 06 E0 47 00 mov byte ds:47E0h, 0
+    /// A78B: F6 06 EB 46 40 test byte ds:46EBh, 40h
+    /// A790: 74 08          jz  short loc_A79A    ; -> cs1:0x88CA
+    /// A792: 80 26 EB 46 BF and byte ds:46EBh, 0BFh
+    /// A797: E9 15 F8       jmp sub_9FAF          ; -> cs1:0x80DF
+    /// A79A: loc_A79A       (si=ax; call sub_EE40; call sub_A7C1; -> sub_A7A2)
+    /// </code>
+    /// </remarks>
+    public Action SetActiveScriptRecord_1000_88AF_0188AF(int gotoAddress) {
+        if (AX == 0) {                                     // or ax,ax / jz nullsub_8
+            return NearRet();
+        }
+        UInt16[DS, 0x4780] = AX;                           // mov ds:4780h, ax
+        UInt8[DS, 0x47E0] = 0;                             // mov byte ds:47E0h, 0
+        if ((UInt8[DS, 0x46EB] & 0x40) == 0) {             // test ds:46EBh,40h / jz loc_A79A
+            return NearJump(0x88CA);                       // loc_A79A (emulated tail -> sub_A7A2)
+        }
+        UInt8[DS, 0x46EB] = (byte)(UInt8[DS, 0x46EB] & 0xBF); // and ds:46EBh, 0BFh
+        return NearJump(0x80DF);                            // jmp sub_9FAF (cs1:0x80DF)
+    }
+
+    /// <summary>
+    /// Override for cs1:0x2EBF — <c>sub_4D8F</c>. Loads <c>BP</c> from the
+    /// word at <c>ds:0x2220</c> (the active keyed-record context pointer),
+    /// sets <c>BX=0x0F66</c> (the handler-table selector tag), and tail-jumps
+    /// into the shared keyed-dispatch loop at <c>cs1:0xD338</c>
+    /// (<c>sub_F208</c>). Same trampoline family as
+    /// <see cref="SetupBp204AThenJmpD338_1000_B941_1B941"/>; the <c>jmp</c> is
+    /// modelled faithfully by <see cref="NearJump"/> so the dispatcher's
+    /// <c>retn</c> returns on this routine's behalf — exact, no stub.
+    /// </summary>
+    /// <remarks>
+    /// Asm (10 B), byte-verified against cs1.bin@0x2EBF
+    /// (<c>8B 2E 20 22 BB 66 0F E9 6F A4</c>):
+    /// <code>
+    /// 4D8F: 8B 2E 20 22   mov bp, ds:2220h
+    /// 4D93: BB 66 0F      mov bx, 0F66h
+    /// 4D96: E9 6F A4      jmp sub_F208        ; -> cs1:0xD338
+    /// </code>
+    /// </remarks>
+    public Action SetupBpFrom2220Bx0F66ThenJmpD338_1000_2EBF_012EBF(int gotoAddress) {
+        BP = UInt16[DS, 0x2220];   // mov bp, ds:2220h
+        BX = 0x0F66;               // mov bx, 0F66h
+        return NearJump(0xD338);   // jmp sub_F208 (ASM 0xF208 - 0x1ED0)
     }
 
     /// <summary>
