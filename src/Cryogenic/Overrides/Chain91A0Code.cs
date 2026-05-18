@@ -1,6 +1,10 @@
 namespace Cryogenic.Overrides;
 
 using System;
+using System.IO;
+
+using Spice86.Core.Emulator.OperatingSystem;
+using Spice86.Core.Emulator.OperatingSystem.Structures;
 
 /// <summary>
 /// Partial class for the <c>cs1:0x91A0</c> (<c>sub_B070</c>) deep-chain
@@ -54,6 +58,249 @@ public partial class Overrides {
         DefineFunction(cs1, 0x9F1F, ResetSpeakerStateCont_1000_9F1F_019F1F);
         DefineFunction(cs1, 0xA90B, SaveDirInit_1000_A90B_01A90B);
         DefineFunction(cs1, 0xA8BC, FormatSaveSlotName_1000_A8BC_01A8BC);
+        DefineFunction(cs1, 0xA93F, ReadSaveChunk_1000_A93F_01A93F);
+        DefineFunction(cs1, 0xAC14, SaveAllCallFar3995_1000_AC14_01AC14);
+        DefineFunction(cs1, 0xA9B9, ReadResChunkThenFar39A1_1000_A9B9_01A9B9);
+        DefineFunction(cs1, 0xA83F, LoadResChunkSeq_1000_A83F_01A83F);
+        DefineFunction(cs1, 0xA6CC, ResolveResEntry_1000_A6CC_01A6CC);
+        DefineFunction(cs1, 0x9EFD, LoadResourceRoot_1000_9EFD_019EFD);
+    }
+
+    /// <summary>
+    /// cs1:0x9EFD — <c>sub_BDCD</c>, the 0x9EFD-campaign root. Snapshots
+    /// <c>al=[0x47DC] → [0x47DD]</c>, loads <c>ax=[0x4780]</c>,
+    /// <c>bx=[0x47C4]</c>, then <c>call sub_C59C</c>; bails on CF=0
+    /// (<c>jnb locret_BDCC</c> 0x9EFC = <c>retn</c>); else if
+    /// <c>[0x47C4] &lt; 0x10</c> runs <c>sub_BDEC</c>, and finally
+    /// <c>jmp loc_C62C</c> into its own non-contiguous FUNCTION CHUNK at
+    /// cs1:0xA75C. The 4-instruction compute head is ported in C#; the
+    /// call-chain + chunk tail is delegated to the emulated stream via
+    /// <see cref="NearJump"/>(0x9F0A) — <c>sub_C59C</c> (0xA6CC, sets the CF
+    /// that <c>jnb</c> tests) and <c>sub_BDEC</c> (0x9F1C) are
+    /// NearJump-delegating ports, and <c>loc_C62C</c>/0xA75C is a raw-asm
+    /// code chunk: all are faithful only through the real emulated path.
+    /// </summary>
+    /// <remarks>
+    /// Asm byte-verified vs cs1.bin@0x9EFD
+    /// (<c>A0 DC 47 A2 DD 47 A1 80 47 8B 1E C4 47 E8 BF 07 73 ED
+    /// 83 3E C4 47 10 73 03 E8 03 00 E9 40 08</c>):
+    /// <code>
+    /// 9EFD: A0 DC 47    mov al,ds:47DCh
+    /// 9F00: A2 DD 47    mov ds:47DDh,al
+    /// 9F03: A1 80 47    mov ax,ds:4780h
+    /// 9F06: 8B 1E C4 47 mov bx,ds:47C4h
+    /// 9F0A: E8 BF 07    call sub_C59C (0xA6CC)
+    /// 9F0D: 73 ED       jnb locret_BDCC (0x9EFC=retn)
+    /// 9F0F: 83 3E C4 47 10 cmp word ds:47C4h,10h
+    /// 9F14: 73 03       jnb loc_BDE9 (0x9F19)
+    /// 9F16: E8 03 00    call sub_BDEC (0x9F1C)
+    /// 9F19: E9 40 08    jmp loc_C62C (chunk @0xA75C)
+    /// </code>
+    /// </remarks>
+    public Action LoadResourceRoot_1000_9EFD_019EFD(int gotoAddress) {
+        AL = UInt8[DS, 0x47DC];            // mov al,ds:47DCh
+        UInt8[DS, 0x47DD] = AL;            // mov ds:47DDh,al
+        AX = UInt16[DS, 0x4780];           // mov ax,ds:4780h
+        BX = UInt16[DS, 0x47C4];           // mov bx,ds:47C4h
+        return NearJump(0x9F0A);           // call sub_C59C onward (emulated; incl. chunk@0xA75C)
+    }
+
+    /// <summary>
+    /// cs1:0xA83F — <c>sub_C70F</c>. Clears <c>[0xDC26]</c>, then if PCM is
+    /// enabled (<see cref="CheckPcmEnabled_1000_AE2F_1AE2F"/> sets ZF) loads
+    /// the next resource chunk (<c>sub_CAE4; sub_C7DB; cmc/jnb</c>; the
+    /// <c>les di,[0x3811]</c> type-5 sub-chunk parse; <c>sub_C889; stc</c>).
+    /// The <c>[0xDC26]=0; call sub_CCFF; jz locret_C74D</c> head is ported in
+    /// C# (sub_CCFF/0xAE2F is NearRet-inline and sets ZF); the call-heavy
+    /// body is delegated to the emulated stream via <see cref="NearJump"/>(0xA84A)
+    /// because <c>sub_CAE4</c> (0xAC14 §A FarJump), <c>sub_C7DB</c> (0xA90B)
+    /// and <c>sub_C889</c> (0xA9B9) are all NearJump/FarJump-returning ports
+    /// (faithful only through real emulated calls).
+    /// </summary>
+    /// <remarks>
+    /// Asm (L27) byte-verified vs cs1.bin@0xA83F
+    /// (<c>C7 06 26 DC 00 00 E8 E7 05 74 33 E8 C7 03 E8 BB 00 F5 73 2A
+    /// C4 3E 11 38 83 C7 1A 26 80 3D 05 75 11 26 8B 4D 01 83 C7 04 8B C7
+    /// 05 02 00 A3 26 DC 03 F9 89 3E 11 38 29 3E 15 38 E8 3D 01 F9 C3</c>):
+    /// locret_C74D 0xA87D = <c>C3</c>; delegate point 0xA84A.
+    /// </remarks>
+    public Action LoadResChunkSeq_1000_A83F_01A83F(int gotoAddress) {
+        UInt16[DS, 0xDC26] = 0;                         // mov word ds:0DC26h,0
+        CheckPcmEnabled_1000_AE2F_1AE2F(0);             // call sub_CCFF (sets ZF, NearRet-safe)
+        if (ZeroFlag) {                                 // jz locret_C74D
+            return NearRet();
+        }
+        return NearJump(0xA84A);                          // call sub_CAE4 onward (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0xA6CC — <c>sub_C59C</c>. Resolves a resource entry from
+    /// <c>bx</c>. Contains <b>self-modifying code</b> at <c>loc_C5A1</c>
+    /// (<c>xor byte ptr cs:loc_C5A1+2,10h</c> toggles the
+    /// <c>mov ax,0FFFh</c> immediate between 0x0FFF/0x1FFF each call) plus
+    /// many calls — so only the entry decision <c>cmp bx,0FFFFh; jnz</c> is
+    /// ported in C#; both bodies are delegated to the emulated stream via
+    /// <see cref="NearJump"/> (loc_C5A1 cs1:0xA6D1 / loc_C5B6 cs1:0xA6E6).
+    /// This is deliberate and exact: the self-modification mutates emulated
+    /// code memory and is only faithful when executed there — reimplementing
+    /// it in C# would not reproduce the toggled-immediate behaviour.
+    /// </summary>
+    /// <remarks>
+    /// Asm head byte-verified vs cs1.bin@0xA6CC
+    /// (<c>83 FB FF 75 15 B8 FF 0F 2E 80 36 D3 A6 10 ...</c>):
+    /// <c>cmp bx,0FFFFh</c>; <c>jnz +0x15</c> → loc_C5B6 0xA6E6; fall →
+    /// loc_C5A1 0xA6D1 (<c>mov ax,0FFFh</c>; <c>xor byte cs:[0xA6D3],10h</c>).
+    /// </remarks>
+    public Action ResolveResEntry_1000_A6CC_01A6CC(int gotoAddress) {
+        if (BX != 0xFFFF) {                             // cmp bx,0FFFFh ; jnz loc_C5B6
+            return NearJump(0xA6E6);                     // loc_C5B6 (emulated)
+        }
+        return NearJump(0xA6D1);                          // loc_C5A1 (self-modifying, emulated)
+    }
+
+    /// <summary>
+    /// cs1:0xAC14 — <c>sub_CAE4</c>. Saves 7 registers, runs
+    /// <c>sub_F92F(si=0xAB92)</c> + <c>sub_C871</c> (both NearRet-inline,
+    /// call-and-discard-safe), then a far-indirect <c>call dword ptr
+    /// ds:[0x3995]</c> whose raw-asm continuation (pop es/bp/di/si/cx/bx/ax;
+    /// retn) restores them. Clean §A FarJump-continuation: push the 7 regs +
+    /// CS(cs1) + the continuation IP 0xAC28, then <see cref="FarJump"/> to
+    /// <c>[0x3995]</c>.
+    /// </summary>
+    /// <remarks>
+    /// Asm (L20) byte-verified vs cs1.bin@0xAC14
+    /// (<c>50 53 51 56 57 55 06 BE 92 AB E8 3E 2E E8 7D FD FF 1E 95 39
+    /// 07 5D 5F 5E 59 5B 58 C3</c>): far call @0xAC24, continuation @0xAC28.
+    /// </remarks>
+    public Action SaveAllCallFar3995_1000_AC14_01AC14(int gotoAddress) {
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = AX;   // push ax
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = BX;   // push bx
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = CX;   // push cx
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = SI;   // push si
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = DI;   // push di
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = BP;   // push bp
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = ES;   // push es
+        SI = 0xAB92;                                   // mov si,0AB92h
+        ListRemoveRecordBySi_1000_DA5F_1DA5F(0);        // call sub_F92F (NearRet-safe)
+        CloseFileHandle3821_1000_A9A1_01A9A1(0);        // call sub_C871 (NearRet-safe)
+        ushort off = UInt16[DS, 0x3995];                // call dword ptr ds:3995h
+        ushort seg = UInt16[DS, 0x3997];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0xAC28; // continuation (raw pop*7; retn)
+        return FarJump(seg, off);
+    }
+
+    /// <summary>
+    /// cs1:0xA9B9 — <c>sub_C889</c>. Returns early
+    /// (<c>locret_C8B6</c> 0xA9E6 = <c>retn</c>) if the resource file is not
+    /// open (<see cref="CheckResFileOpen_1000_ABA3_01ABA3"/> sets ZF) or via
+    /// the <c>[0x3817]/[0x381F]</c> guard; else selects the descriptor
+    /// (<c>si=0x3811</c> or <c>0x3819</c>), loads <c>bx=[0x3821]</c>,
+    /// <c>es:dx=[si]</c>, <c>dx+=6</c>. The guard logic is ported in C#;
+    /// <c>push si; call sub_C80F; pop si; jb locret_C8B6;
+    /// call dword ptr ds:[0x39A1]</c> is delegated to the emulated stream via
+    /// <see cref="NearJump"/>(0xA9DB) because <c>sub_C80F</c> (0xA93F, my
+    /// port) has a <c>NearJump(0xA9A1)</c> path and <c>[0x39A1]</c> is a §A
+    /// far-indirect — both faithful only through real emulated calls.
+    /// </summary>
+    /// <remarks>
+    /// Asm (L23) byte-verified vs cs1.bin@0xA9B9
+    /// (<c>E8 E7 01 74 28 BE 11 38 80 3E 17 38 00 74 0A 80 3E 1F 38 00
+    /// 75 17 BE 19 38 8B 1E 21 38 C4 14 83 C2 06 56 E8 60 FF 5E 72 04
+    /// FF 1E A1 39 C3</c>): loc_C8A2=0xA9D2, delegate@0xA9DB, locret=0xA9E6.
+    /// </remarks>
+    public Action ReadResChunkThenFar39A1_1000_A9B9_01A9B9(int gotoAddress) {
+        CheckResFileOpen_1000_ABA3_01ABA3(0);          // call sub_CA73 (sets ZF, NearRet-safe)
+        if (ZeroFlag) {                                 // jz locret_C8B6
+            return NearRet();
+        }
+        SI = 0x3811;                                    // mov si,3811h
+        if (UInt8[DS, 0x3817] != 0) {                   // cmp byte [0x3817],0 ; jz loc_C8A2
+            if (UInt8[DS, 0x381F] != 0) {               // cmp byte [0x381F],0 ; jnz locret_C8B6
+                return NearRet();
+            }
+            SI = 0x3819;                                // mov si,3819h
+        }
+        // loc_C8A2:
+        BX = UInt16[DS, 0x3821];                         // mov bx,[0x3821]
+        ES = UInt16[DS, (ushort)(SI + 2)];              // les dx,[si]
+        DX = (ushort)(UInt16[DS, SI] + 6);              //   dx=[si] ; add dx,6
+        return NearJump(0xA9DB);                          // push si; call sub_C80F; ... (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0xA93F — <c>sub_C80F</c>. Seeks the savegame file to the 32-bit
+    /// position <c>[0xDBC2]:[0xDBC0]</c> (<c>int 21h</c> AX=0x4200 LSEEK
+    /// SEEK_SET) and reads up to 0x2000 bytes — or the remaining
+    /// <c>[0xDBC6]:[0xDBC4]</c> count — into <c>es:dx</c> (<c>int 21h</c>
+    /// AH=0x3F READ), recording the byte count at <c>[si+4]</c>, advancing
+    /// the file position, bumping the slot counter <c>[0x3823]</c> and
+    /// writing the per-chunk descriptor at <c>[si+6]/[si+7]</c>. Both
+    /// <c>int 21h</c> calls are modelled with the same managed
+    /// <see cref="DosFileManager"/> path HnmCode uses
+    /// (<c>MoveFilePointerUsingHandle</c> / <c>ReadFileOrDevice</c>);
+    /// the asm's <c>jb locret_C888</c> read-error branch is unreachable in
+    /// the managed model (errors throw), so the success path is taken.
+    /// On the final-negative-count path it sets bit 7 of <c>[si+7]</c> and
+    /// falls through into <c>sub_C871</c> (cs1:0xA9A1, already C#) modelled
+    /// by <see cref="NearJump"/>; otherwise returns (locret_C888 0xA9B8 =
+    /// <c>retn</c>, CF=0 from the preceding <c>clc</c>).
+    /// </summary>
+    /// <remarks>
+    /// Asm (L45) byte-verified vs cs1.bin@0xA93F
+    /// (<c>52 8B 16 C0 DB 8B 0E C2 DB B8 00 42 CD 21 5A 56 1E B9 00 20
+    /// A1 C4 DB 29 0E C4 DB 83 1E C6 DB 00 73 03 8B C8 41 06 1F B4 3F CD 21
+    /// 1F 5E 89 44 04 72 47 ... F8 79 1B 80 4C 07 80</c>). BX = caller's
+    /// file handle. The 32-bit <c>sub [0xDBC4],0x2000 / sbb [0xDBC6],0 /
+    /// jnb</c> selects full-block (0x2000) vs final partial
+    /// (<c>cx = old[0xDBC4]+1</c>) read.
+    /// </remarks>
+    public Action ReadSaveChunk_1000_A93F_01A93F(int gotoAddress) {
+        DosFileManager fm = Machine.Dos.FileManager;
+        ushort handle = BX;                               // BX = file handle (caller)
+        // push dx ; dx=[0xDBC0]; cx=[0xDBC2]; ax=4200h; int 21h (LSEEK SEEK_SET) ; pop dx
+        uint seekOff = (uint)((UInt16[DS, 0xDBC2] << 16) | UInt16[DS, 0xDBC0]);
+        fm.MoveFilePointerUsingHandle(SeekOrigin.Begin, handle, (int)seekOff);
+        // push si ; push ds ; cx=2000h ; ax=[0xDBC4]
+        ushort cx = 0x2000;
+        ushort ax0 = UInt16[DS, 0xDBC4];
+        // sub [0xDBC4],cx ; sbb word [0xDBC6],0 ; jnb loc_C834 ; (else) cx=ax ; inc cx
+        ushort borrow1 = (ushort)(ax0 < cx ? 1 : 0);
+        UInt16[DS, 0xDBC4] = (ushort)(ax0 - cx);
+        ushort hi0 = UInt16[DS, 0xDBC6];
+        UInt16[DS, 0xDBC6] = (ushort)(hi0 - borrow1);
+        bool finalBorrow = hi0 < borrow1;                 // CF out of `sbb [0xDBC6],0`
+        if (finalBorrow) {                                // NOT jnb -> partial last read
+            cx = (ushort)(ax0 + 1);
+        }
+        CX = cx;
+        // loc_C834: push es ; pop ds (ds=es) ; ah=3Fh ; int 21h (READ) ; pop ds ; pop si
+        uint target = (uint)((ES << 4) + DX);             // DS:DX with DS=ES, DX=caller's dx
+        DosFileOperationResult r = fm.ReadFileOrDevice(handle, cx, target);
+        ushort bytesRead = (ushort)(r.Value ?? 0);
+        AX = bytesRead;
+        UInt16[DS, (ushort)(SI + 4)] = bytesRead;          // mov [si+4],ax  (jb unreachable)
+        // add [0xDBC0],ax ; adc word [0xDBC2],0
+        uint pos = ((uint)(UInt16[DS, 0xDBC2] << 16) | UInt16[DS, 0xDBC0]) + bytesRead;
+        UInt16[DS, 0xDBC0] = (ushort)(pos & 0xFFFF);
+        UInt16[DS, 0xDBC2] = (ushort)(pos >> 16);
+        UInt8[DS, 0x376A] = 0xFF;                          // mov byte [0x376A],0FFh
+        UInt8[DS, (ushort)(SI + 6)] = 1;                   // mov byte [si+6],1
+        byte bl = UInt8[DS, 0x3823];                       // mov bl,[0x3823]
+        if (bl < 0x3F) {                                   // cmp bl,3Fh ; jnb loc_C862
+            UInt8[DS, 0x3823] = (byte)(UInt8[DS, 0x3823] + 1);  // inc byte [0x3823]
+            bl = (byte)(bl + 1);                           // inc bl
+        }
+        BL = bl;
+        UInt8[DS, (ushort)(SI + 7)] = bl;                  // loc_C862: mov [si+7],bl
+        short dbc6 = (short)UInt16[DS, 0xDBC6];             // cmp word [0xDBC6],0
+        CarryFlag = false;                                 // clc
+        if (dbc6 >= 0) {                                   // jns locret_C888 (SF=0)
+            return NearRet();                               // 0xA9B8 = retn
+        }
+        UInt8[DS, (ushort)(SI + 7)] =
+            (byte)(UInt8[DS, (ushort)(SI + 7)] | 0x80);    // or byte [si+7],80h
+        return NearJump(0xA9A1);                            // fall into sub_C871 (C#)
     }
 
     /// <summary>

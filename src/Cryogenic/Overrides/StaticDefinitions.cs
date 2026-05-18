@@ -47,14 +47,14 @@ public partial class Overrides {
         DefineFunction(cs1, 0x739E, "map_func_ida");
         DefineFunction(cs1, 0xA87E, "audio_test_frequency_ida");
         // cs1:0xA90B open_res_file_ida (sub_C7DB) — real C# override in Chain91A0Code.cs.
-        DefineFunction(cs1, 0xA93F, "read_audio_file_ida");
+        // cs1:0xA93F read_audio_file_ida (sub_C80F) — real C# override in Chain91A0Code.cs.
         // cs1:0xA9A1 close_res_file_handle_ida (sub_C871) — real C# override in Chain91A0Code.cs.
         // cs1:0xA9E7 pcm_test_audio_done_ida — real C# override in AudioCode.cs.
         DefineFunction(cs1, 0xAA0F, "decode_sd_block_ida");
         DefineFunction(cs1, 0xAB15, "audio_start_voc_ida");
         // cs1:0xABA3 check_res_file_open_ida — real C# override in AudioCode.cs.
         DefineFunction(cs1, 0xABE9, "open_voc_resource_ida");
-        DefineFunction(cs1, 0xAC14, "pcm_stop_voc_q_ida");
+        // cs1:0xAC14 pcm_stop_voc_q_ida (sub_CAE4) — real C# override in Chain91A0Code.cs.
         DefineFunction(cs1, 0xAD57, "play_music_MORNING_HSQ_ida");
         DefineFunction(cs1, 0xAE62, "load_music_ida");
         DefineFunction(cs1, 0xB389, "open_sav_cl_ida");
