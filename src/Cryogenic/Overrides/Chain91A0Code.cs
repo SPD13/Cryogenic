@@ -31,6 +31,115 @@ public partial class Overrides {
     }
 
     /// <summary>
+    /// Registers the <c>cs1:0x978E</c> (<c>sub_B65E</c>) deep-chain campaign
+    /// overrides — a second bounded bottom-up subtree (5 nodes:
+    /// BA7C, E3AD, B81F, B7D8, B65E) sharing the same exact-port discipline
+    /// and <c>tools/chain_tree.py</c> workflow as the 0x91A0 campaign.
+    /// </summary>
+    public void DefineChain978ECodeOverrides() {
+        DefineFunction(cs1, 0x9BAC, SaveSiCallGuard_1000_9BAC_019BAC);
+        DefineFunction(cs1, 0xC4DD, CursorGuardThenRectRegs_1000_C4DD_01C4DD);
+        DefineFunction(cs1, 0x994F, ComputeBpFromMenuState_1000_994F_01994F);
+    }
+
+    /// <summary>
+    /// cs1:0x9BAC — <c>sub_BA7C</c>: <c>push si; call sub_B067; pop si</c>
+    /// then falls through into <c>sub_BA81</c> (cs1:0x9BB1). Zero compute;
+    /// modelled with the near-call-continuation idiom because
+    /// <c>sub_B067</c> (cs1:0x9197 GuardSceneNotTerminator) has a
+    /// <c>NearJump(0x91A0)</c> path so call-and-discard is unsafe: push
+    /// <c>si</c>, push the raw continuation IP 0x9BB0 (raw <c>pop si</c>
+    /// which then falls into the emulated <c>sub_BA81</c>), then
+    /// <see cref="NearJump"/> to sub_B067.
+    /// </summary>
+    /// <remarks>
+    /// Asm (5 B) byte-verified vs cs1.bin@0x9BAC (<c>56 E8 E7 F5 5E</c>):
+    /// <c>9BAC:56 push si | 9BAD:E8 E7 F5 call sub_B067 (0x9197) |
+    /// 9BB0:5E pop si</c> — no retn, falls into sub_BA81@0x9BB1.
+    /// </remarks>
+    public Action SaveSiCallGuard_1000_9BAC_019BAC(int gotoAddress) {
+        SP = (ushort)(SP - 2);
+        UInt16[SS, SP] = SI;          // push si
+        SP = (ushort)(SP - 2);
+        UInt16[SS, SP] = 0x9BB0;      // push continuation IP (raw `pop si` -> fall into sub_BA81)
+        return NearJump(0x9197);      // call sub_B067
+    }
+
+    /// <summary>
+    /// cs1:0xC4DD — <c>sub_E3AD</c>: <c>ax=[0xDC38]; if ax&lt;0x98
+    /// call sub_FA82; loc_E3B8: si=0x1470; jmp sub_E3C0</c>. The
+    /// <c>[0xDC38]</c> load + threshold decision and the fast
+    /// (<c>ax&gt;=0x98</c>) path are ported in C#; the <c>ax&lt;0x98</c>
+    /// path delegates from <c>call sub_FA82</c> (cs1:0xC4E5) to the
+    /// emulated stream — <c>sub_FA82</c> (0xDBB2) is a §A FarJump port,
+    /// unsafe to call-and-discard. The tail <c>jmp sub_E3C0</c> (cs1:0xC4F0,
+    /// C# <c>RectAtSiToRegs</c>) is modelled by <see cref="NearJump"/>.
+    /// </summary>
+    /// <remarks>
+    /// Asm byte-verified vs cs1.bin@0xC4DD
+    /// (<c>A1 38 DC 3D 98 00 73 03 E8 CA 16 BE 70 14 EB 03</c>):
+    /// <code>
+    /// C4DD: A1 38 DC    mov ax,ds:0DC38h
+    /// C4E0: 3D 98 00    cmp ax,98h
+    /// C4E3: 73 03       jnb loc_E3B8 (0xC4E8)
+    /// C4E5: E8 CA 16    call sub_FA82 (0xDBB2)
+    /// C4E8: BE 70 14    mov si,1470h            ; loc_E3B8
+    /// C4EB: EB 03       jmp sub_E3C0 (0xC4F0)
+    /// </code>
+    /// </remarks>
+    public Action CursorGuardThenRectRegs_1000_C4DD_01C4DD(int gotoAddress) {
+        AX = UInt16[DS, 0xDC38];           // mov ax,ds:0DC38h
+        if (AX >= 0x0098) {                // cmp ax,98h ; jnb loc_E3B8
+            SI = 0x1470;                   // loc_E3B8: mov si,1470h
+            return NearJump(0xC4F0);       // jmp sub_E3C0
+        }
+        return NearJump(0xC4E5);           // call sub_FA82 onward (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0x994F — <c>sub_B81F</c>: returns <c>bp</c> for the current menu
+    /// state. If <c>[0x47D0]==0</c>: <c>bx=6; bp = LcgPrng() + [0x00F0]</c>;
+    /// else <c>bp = ([0x47D0]-1) &lt;&lt; 1</c>. Fully ported —
+    /// <see cref="LcgPrng_1000_E3B7_01E3B7"/> (cs1:0xE3B7) is NearRet-inline
+    /// so call-and-discard-safe.
+    /// </summary>
+    /// <remarks>
+    /// Asm byte-verified vs cs1.bin@0x994F
+    /// (<c>A0 D0 47 0A C0 75 0D BB 06 00 E8 5B 4A 8B E8 03 2E F0 00 C3
+    /// FE C8 32 E4 D1 E0 8B E8 C3</c>):
+    /// <code>
+    /// 994F: A0 D0 47    mov al,ds:47D0h
+    /// 9952: 0A C0       or al,al
+    /// 9954: 75 0D       jnz loc_B833 (0x9963)
+    /// 9956: BB 06 00    mov bx,6
+    /// 9959: E8 5B 4A    call sub_10287 (0xE3B7)
+    /// 995C: 8B E8       mov bp,ax
+    /// 995E: 03 2E F0 00 add bp,ds:0F0h
+    /// 9962: C3          retn
+    /// 9963: FE C8       dec al              ; loc_B833
+    /// 9965: 32 E4       xor ah,ah
+    /// 9967: D1 E0       shl ax,1
+    /// 9969: 8B E8       mov bp,ax
+    /// 996B: C3          retn
+    /// </code>
+    /// </remarks>
+    public Action ComputeBpFromMenuState_1000_994F_01994F(int gotoAddress) {
+        byte al = UInt8[DS, 0x47D0];          // mov al,ds:47D0h
+        AL = al;
+        if (al != 0) {                        // or al,al ; jnz loc_B833
+            byte d = (byte)(al - 1);          // dec al
+            AX = (ushort)(d << 1);            // xor ah,ah ; shl ax,1
+            BP = AX;                          // mov bp,ax
+            return NearRet();                 // retn
+        }
+        BX = 0x0006;                          // mov bx,6
+        LcgPrng_1000_E3B7_01E3B7(0);          // call sub_10287 (NearRet-inline)
+        BP = AX;                              // mov bp,ax
+        BP = (ushort)(BP + UInt16[DS, 0x00F0]); // add bp,ds:0F0h
+        return NearRet();                     // retn
+    }
+
+    /// <summary>
     /// cs1:0xABC6 — <c>sub_CA96</c>. Leaf: <c>mov byte ds:0DC2Bh,0; retn</c>.
     /// Byte-verified vs cs1.bin@0xABC6: <c>C6 06 2B DC 00 C3</c>.
     /// </summary>
