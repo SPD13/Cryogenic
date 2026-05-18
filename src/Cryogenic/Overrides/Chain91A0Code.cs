@@ -78,6 +78,124 @@ public partial class Overrides {
         DefineFunction(cs1, 0xD0E3, LookupKeyInCsTable_1000_D0E3_01D0E3);
         DefineFunction(cs1, 0x7B0F, ResetThenSwapSiDiCallDfb8_1000_7B0F_017B0F);
         DefineFunction(cs1, 0x9D94, EmitGlyphRunLoop_1000_9D94_019D94);
+        DefineFunction(cs1, 0x9D6A, EmitGlyphList_1000_9D6A_019D6A);
+        DefineFunction(cs1, 0x9D6F, EmitGlyphListLoop_1000_9D6F_019D6F);
+        DefineFunction(cs1, 0x8ED3, MeasureTextWidth_1000_8ED3_018ED3);
+    }
+
+    /// <summary>
+    /// cs1:0x9D6A — <c>sub_BC3A</c> entry: <c>es=ss:[0xDBD8]</c> then falls
+    /// into the loop top <c>loc_BC3F</c> (cs1:0x9D6F, the C#
+    /// <see cref="EmitGlyphListLoop_1000_9D6F_019D6F"/>).
+    /// </summary>
+    /// <remarks>Asm: <c>9D6A: 36 8E 06 D8 DB mov es,ss:0DBD8h</c>
+    /// (byte-verified cs1.bin@0x9D6A); loc_BC3F @0x9D6F.</remarks>
+    public Action EmitGlyphList_1000_9D6A_019D6A(int gotoAddress) {
+        ES = UInt16[SS, 0xDBD8];          // mov es,ss:0DBD8h
+        return NearJump(0x9D6F);          // -> loc_BC3F
+    }
+
+    /// <summary>
+    /// cs1:0x9D6F — <c>sub_BC3A</c> loop body (<c>loc_BC3F</c>). One C#
+    /// invocation == one iteration: <c>lodsb</c>; byte 0 terminates
+    /// (<c>locret_BC63</c> 0x9D93 = <c>retn</c>); a leading <c>1</c> escape
+    /// reads an extra byte into <c>ah</c>; computes
+    /// <c>si = ss:[0x47CC] + ds:[(ax-2)*2 + si]</c> then runs
+    /// <c>sub_BC64</c> for that run and loops. The <c>call sub_BC64</c>
+    /// (cs1:0x9D94, a §A-loop port) uses the call-continuation idiom: push
+    /// the raw continuation IP 0x9D90 (raw <c>pop si; jmp loc_BC3F</c> →
+    /// re-enters this override) then <see cref="NearJump"/> to sub_BC64.
+    /// </summary>
+    /// <remarks>
+    /// Asm byte-verified vs cs1.bin@0x9D6F
+    /// (<c>AC 32 E4 0A C0 74 1D 3C 01 75 03 8A E0 AC 56 2D 02 00 D1 E0
+    /// 8B E8 36 8B 36 CC 47 3E 03 32 E8 04 00 5E EB DC C3</c>):
+    /// call sub_BC64 @0x9D8D, continuation @0x9D90.
+    /// </remarks>
+    public Action EmitGlyphListLoop_1000_9D6F_019D6F(int gotoAddress) {
+        byte b = UInt8[DS, SI]; SI = (ushort)(SI + 1);   // lodsb
+        AX = b;                                          // xor ah,ah
+        if (b == 0) {                                    // or al,al ; jz locret_BC63
+            return NearRet();
+        }
+        if (b == 1) {                                    // cmp al,1 ; jnz loc_BC4D
+            AH = 1;                                       // mov ah,al
+            byte b2 = UInt8[DS, SI]; SI = (ushort)(SI + 1);   // lodsb
+            AL = b2;                                      //   ax = 0x0100|b2
+        }
+        // loc_BC4D:
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = SI;      // push si
+        AX = (ushort)(AX - 2);                            // sub ax,2
+        AX = (ushort)(AX << 1);                           // shl ax,1
+        BP = AX;                                          // mov bp,ax
+        SI = UInt16[SS, 0x47CC];                          // mov si,ss:47CCh
+        SI = (ushort)(SI + UInt16[DS, (ushort)(BP + SI)]); // add si,ds:[bp+si]
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0x9D90;  // call sub_BC64 (cont = raw pop si;jmp loc_BC3F)
+        return NearJump(0x9D94);
+    }
+
+    /// <summary>
+    /// cs1:0x8ED3 — <c>sub_ADA3</c>. Measures the rendered width of the
+    /// text at <c>ds:si</c> into <c>cl</c>, stopping at space / CR / a
+    /// signed-negative byte (and rewinding <c>si</c> by 1). Per char it
+    /// either adds the width-table entry (<c>xlat</c> on <c>[0x47A0]</c>) or,
+    /// for the special <c>[0x2518]==0xD0FF &amp;&amp; si==0xA6B1</c> case,
+    /// the value from <see cref="LookupKeyInCsTable_1000_D0E3_01D0E3"/>
+    /// (<c>sub_EFB3</c> — NearRet-inline, call-and-discard-safe, sets CF/AL);
+    /// control bytes 6/8 switch the active width table
+    /// (<c>[0x47A0]=0xCF6C/0xCEEC</c>). Fully ported.
+    /// </summary>
+    /// <remarks>
+    /// Asm (L54) byte-verified vs cs1.bin@0x8ED3
+    /// (<c>33 C9 53 8B 1E A0 47 AC 3C 20 74 46 3C 0D 74 42 0A C0 74 06
+    /// 3C 09 72 1E 78 38 81 3E 18 25 FF D0 75 0F 81 FE B1 A6 75 09
+    /// E8 E5 41 72 04 02 C8 EB D6 D7 02 C8 ...</c>). <c>bx</c> is the
+    /// width-table base loaded once from <c>[0x47A0]</c> at entry (the
+    /// later <c>[0x47A0]</c> writes do not reload it). <c>cmp al,9; jb
+    /// loc_ADD9; js loc_ADF5</c> ⇒ <c>al&lt;9</c>→control,
+    /// <c>al≥0x80</c>→stop, <c>9≤al&lt;0x80</c>→measure.
+    /// </remarks>
+    public Action MeasureTextWidth_1000_8ED3_018ED3(int gotoAddress) {
+        CX = 0;                                           // xor cx,cx
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = BX;      // push bx
+        ushort tbl = UInt16[DS, 0x47A0];                  // mov bx,ds:47A0h
+        BX = tbl;
+        while (true) {                                    // loc_ADAA
+            byte al = UInt8[DS, SI]; SI = (ushort)(SI + 1);   // lodsb
+            AL = al;
+            if (al == 0x20 || al == 0x0D) {               // jz loc_ADF5 (space/CR)
+                break;
+            }
+            if (al != 0 && al < 0x09) {                   // or al,al/jz loc_ADBD ; cmp al,9/jb loc_ADD9
+                // loc_ADD9: control bytes (al in 1..8)
+                if (al == 0x06) {                         // jz loc_ADED
+                    UInt16[DS, 0x47A0] = 0xCF6C;
+                } else if (al == 0x08) {                  // cmp al,8 ; jnz loc_ADAA
+                    UInt16[DS, 0x47A0] = 0xCEEC;
+                }
+                continue;                                  // jmp loc_ADAA
+            }
+            if (al != 0 && (al & 0x80) != 0) {            // js loc_ADF5 (al >= 0x80)
+                break;
+            }
+            // loc_ADBD / loc_ADD4  (al == 0, or 9 <= al < 0x80)
+            byte add;
+            if (UInt16[DS, 0x2518] == 0xD0FF && SI == 0xA6B1) {
+                LookupKeyInCsTable_1000_D0E3_01D0E3(0);   // call sub_EFB3 (sets CF/AL)
+                if (CarryFlag) {                           // jb loc_ADD4
+                    add = UInt8[DS, (ushort)(BX + AL)];   // loc_ADD4: xlat
+                } else {
+                    add = AL;                              // add cl,al ; loop
+                }
+            } else {
+                add = UInt8[DS, (ushort)(BX + AL)];        // loc_ADD4: xlat
+            }
+            CL = (byte)(CL + add);                          // add cl,al
+        }
+        // loc_ADF5:
+        SI = (ushort)(SI - 1);                              // dec si
+        BX = UInt16[SS, SP]; SP = (ushort)(SP + 2);        // pop bx
+        return NearRet();                                   // retn
     }
 
     /// <summary>
