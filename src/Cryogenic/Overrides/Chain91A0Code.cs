@@ -632,11 +632,90 @@ public partial class Overrides {
     /// </summary>
     public void DefineVerb13HandlerCodeOverrides() {
         DefineFunction(cs1, 0xA03F, OuterVmActionDispatch_1000_A03F_01A03F);
+        DefineFunction(cs1, 0x171A, SceneParamDispatchLoopTop_1000_171A_01171A);
+        DefineFunction(cs1, 0x171F, SceneParamDispatch_1000_171F_01171F);
+        DefineFunction(cs1, 0x1771, SceneParamDispatchEntry_1000_1771_011771);
         DefineFunction(cs1, 0xD323, DialogueFlush_1000_D323_01D323);
         DefineFunction(cs1, 0x4F0C, Verb13Dispatch_1000_4F0C_014F0C);
         DefineFunction(cs1, 0x5B5D, StoreBxDxTo197x_1000_5B5D_015B5D);
         DefineFunction(cs1, 0x49D9, Verb13IndirectGate_1000_49D9_0149D9);
         DefineFunction(cs1, 0x2E52, SceneSetupThenChunk_1000_2E52_012E52);
+    }
+
+    /// <summary>
+    /// cs1:0x171A — <b>Phase-27.3 scene-parameter opcode dispatch loop top</b>
+    /// (Tech/22). Clears the "currently dispatching" flag <c>[0xCE9D]</c>
+    /// then falls into the dispatch iteration
+    /// <see cref="SceneParamDispatch_1000_171F_01171F"/> (cs1:0x171F).
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0x171A
+    /// (<c>C6 06 9D CE 00</c> = mov byte [0xCE9D],0; then 0x171F).</remarks>
+    public Action SceneParamDispatchLoopTop_1000_171A_01171A(int gotoAddress) {
+        UInt8[DS, 0xCE9D] = 0;             // mov byte ds:0CE9Dh,0
+        return NearJump(0x171F);
+    }
+
+    /// <summary>
+    /// cs1:0x171F — <b>Phase-27.3 scene-parameter opcode dispatcher</b>
+    /// (Tech/22). One C# invocation == one opcode iteration: read the next
+    /// block byte (<c>cs lodsb</c> from <c>[ds:0x477A]</c>), <c>0xFF</c> ends
+    /// the block (→ cleanup <c>cs1:0x1736</c>, emulated); else advance the
+    /// saved IP and dispatch through the dense byte-indexed 257-byte jump
+    /// table at <c>cs1:0x1475</c> (<c>jmp word near [cs:bx+0x1475]</c>) — the
+    /// opcode handler runs in the emulated stream and <c>jmp</c>s back to
+    /// the dispatch loop (cs1:0x171A/0x171F = this override) for the next
+    /// opcode. The 256 handler bodies + the cleanup are left exact-emulated
+    /// (the documented dispatcher-loop pattern; the dispatcher itself is the
+    /// Phase-27.3 deliverable).
+    /// </summary>
+    /// <remarks>
+    /// Asm byte-verified vs cs1.bin@0x171F
+    /// (<c>8B 36 7A 47 2E AC 3C FF 74 0D 89 36 7A 47 32 E4 8B D8
+    /// 2E FF A7 75 14</c>):
+    /// <code>
+    /// 171F: 8B 36 7A 47       mov si,[ds:0x477A]
+    /// 1723: 2E AC             cs lodsb            ; al=CS:[si]; si++
+    /// 1725: 3C FF / 74 0D     cmp al,0FFh ; jz 0x1736 (cleanup)
+    /// 1729: 89 36 7A 47       mov [ds:0x477A],si
+    /// 172D: 32 E4 / 8B D8     xor ah,ah ; mov bx,ax
+    /// 1731: 2E FF A7 75 14    jmp word near [cs:bx+0x1475]
+    /// </code>
+    /// <c>cs lodsb</c> / the table read are CS-relative (CS=cs1 at runtime).
+    /// </remarks>
+    public Action SceneParamDispatch_1000_171F_01171F(int gotoAddress) {
+        ushort si = UInt16[DS, 0x477A];                    // mov si,[ds:0x477A]
+        byte al = UInt8[cs1, si];                          // cs lodsb
+        si = (ushort)(si + 1);
+        AL = al;
+        if (al == 0xFF) {                                  // cmp al,0FFh ; jz cleanup
+            return NearJump(0x1736);                        // cleanup (emulated)
+        }
+        UInt16[DS, 0x477A] = si;                            // mov [ds:0x477A],si
+        SI = si;
+        AH = 0;                                             // xor ah,ah
+        ushort bx = al;                                     // mov bx,ax
+        BX = bx;
+        ushort target = UInt16[cs1, (ushort)(bx + 0x1475)]; // jmp word near [cs:bx+0x1475]
+        return NearJump(target);                            // opcode handler (emulated, loops back here)
+    }
+
+    /// <summary>
+    /// cs1:0x1771 — <c>sub_3641</c>, the <b>scene-parameter dispatcher
+    /// entry</b> (verb-3 tail-jumps here; also called from sub_2EFF/
+    /// sub_3009). Records the block pointer <c>[0x477A]=ax</c>, clears
+    /// <c>[0x4778]</c> and bumps the depth counter <c>[0x4774]</c> in C#,
+    /// then delegates the call-heavy setup tail
+    /// (<c>call sub_(0xB2B9); call sub_(0xAD5E); … ; jmp 0xDA25</c>) to the
+    /// emulated stream via <see cref="NearJump"/>(0x177E).
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0x1771
+    /// (<c>A3 7A 47 C7 06 78 47 00 00 FE 06 74 47 E8 38 9B ...</c>):
+    /// call @0x177E; delegate point 0x177E.</remarks>
+    public Action SceneParamDispatchEntry_1000_1771_011771(int gotoAddress) {
+        UInt16[DS, 0x477A] = AX;                            // mov ds:477Ah,ax
+        UInt16[DS, 0x4778] = 0;                             // mov word ds:4778h,0
+        UInt8[DS, 0x4774] = (byte)(UInt8[DS, 0x4774] + 1);  // inc byte ds:4774h
+        return NearJump(0x177E);                            // call sub_(0xB2B9) ... (emulated)
     }
 
     /// <summary>
