@@ -96,6 +96,106 @@ public partial class Overrides {
     }
 
     /// <summary>
+    /// Registers the Phase-27 verb-13 / verb-8 helper quick-win overrides.
+    /// </summary>
+    public void DefineVerbHelpersCodeOverrides() {
+        DefineFunction(cs1, 0x5B55, StoreDiPairTo197C_1000_5B55_015B55);
+        DefineFunction(cs1, 0xC21B, BlitRunListLoop_1000_C21B_01C21B);
+        DefineFunction(cs1, 0xA186, VerbB8MenuYPos_1000_A186_01A186);
+    }
+
+    /// <summary>
+    /// cs1:0x5B55 — <c>sub_7A25</c> (verb-13 helper). <c>dx=[di+2];
+    /// bx=[di+4]; jmp loc_7A30</c>. The two loads are ported in C#; the
+    /// shared <c>loc_7A30</c> tail (cs1:0x5B60: <c>mov [0x197E],bx;
+    /// mov [0x197C],dx; retn</c>) is delegated to the emulated stream via
+    /// <see cref="NearJump"/> (it is a shared <c>loc_</c> target).
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0x5B55
+    /// (<c>8B 55 02 8B 5D 04 EB 03</c>): <c>jmp +3</c> → loc_7A30 0x5B60.</remarks>
+    public Action StoreDiPairTo197C_1000_5B55_015B55(int gotoAddress) {
+        DX = UInt16[DS, (ushort)(DI + 2)];   // mov dx,[di+2]
+        BX = UInt16[DS, (ushort)(DI + 4)];   // mov bx,[di+4]
+        return NearJump(0x5B60);             // jmp loc_7A30 (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0xC21B — <c>sub_E0EB</c> (verb-13 helper). Loop over a
+    /// <c>(w1,w2,w3)</c>-triple list at <c>ds:si</c> terminated by
+    /// <c>0xFFFF</c> (<c>locret_E13A</c> 0xC26A = <c>retn</c>); per entry
+    /// sets <c>ax=w1, dx=w2, bx=w3</c> and runs <c>sub_E0FF</c>. One C#
+    /// invocation == one iteration; the <c>call sub_E0FF</c> (cs1:0xC22F)
+    /// uses the call-continuation idiom (push raw cont IP 0xC22C =
+    /// <c>pop si; jmp sub_E0EB</c> → re-enters this override) so it is
+    /// faithful regardless of sub_E0FF's return shape.
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0xC21B
+    /// (<c>AD 3D FF FF 74 49 8B D8 AD 8B D0 AD 93 56 E8 03 00 5E EB EC</c>):
+    /// call sub_E0FF @0xC229 → 0xC22F, continuation @0xC22C.</remarks>
+    public Action BlitRunListLoop_1000_C21B_01C21B(int gotoAddress) {
+        ushort w = UInt16[DS, SI]; SI = (ushort)(SI + 2);   // lodsw
+        if (w == 0xFFFF) {                                  // cmp ax,0FFFFh ; jz locret_E13A
+            AX = w;
+            return NearRet();                                // 0xC26A = retn
+        }
+        BX = w;                                              // mov bx,ax
+        DX = UInt16[DS, SI]; SI = (ushort)(SI + 2);          // lodsw ; mov dx,ax
+        ushort w3 = UInt16[DS, SI]; SI = (ushort)(SI + 2);   // lodsw
+        AX = BX;                                             // xchg ax,bx -> ax=w1
+        BX = w3;                                              //              bx=w3
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = SI;          // push si
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0xC22C;      // call sub_E0FF (cont = raw pop si;jmp sub_E0EB)
+        return NearJump(0xC22F);
+    }
+
+    /// <summary>
+    /// cs1:0xA186 — verb-8 scene sub-handler (task #12). Computes the
+    /// menu-row Y position into <c>[0x00D5]</c>: if <c>[0x000A]&amp;2</c> it
+    /// kicks counter 0x28 (<see cref="UpdateCounter0029AndTailKick_1000_6F78_016F78"/>
+    /// — NearRet-inline, call-and-discard-safe) and uses ax=0xFFCE; else it
+    /// reads <c>[0x1176]</c> (special-casing ==1 with a second kick of
+    /// counter 0x0A), adds 0x14, stores it back, and for values &lt; 0x64
+    /// derives <c>bl = 0x80 - ax/6</c> (8-bit <c>div bl</c>). Fully ported.
+    /// </summary>
+    /// <remarks>
+    /// Asm (0xA186..0xA1C3 ret) byte-verified vs cs1.bin@0xA186
+    /// (<c>F6 06 0A 00 02 74 0A B0 28 E8 E6 CD B8 CE FF EB 13 A1 76 11
+    /// 3D 01 00 75 0B 05 0A 00 B0 0A E8 D1 CD B8 0A 00 05 14 00 A3 76 11
+    /// 32 DB 3D 64 00 73 08 B3 06 F6 F3 B3 80 2A D8 88 1E D5 00 C3</c>).
+    /// </remarks>
+    public Action VerbB8MenuYPos_1000_A186_01A186(int gotoAddress) {
+        ushort ax;
+        if ((UInt8[DS, 0x000A] & 0x02) != 0) {              // test byte [0xa],2 ; jz A197
+            AL = 0x28;                                       // mov al,0x28
+            UpdateCounter0029AndTailKick_1000_6F78_016F78(0);// call 0x6F78
+            ax = 0xFFCE;                                      // mov ax,0FFCEh ; jmp A1AA
+        } else {
+            ax = UInt16[DS, 0x1176];                          // mov ax,[0x1176]
+            if (ax == 1) {                                    // cmp ax,1 ; jnz A1AA
+                ax = (ushort)(ax + 0x000A);                   // add ax,0Ah
+                AX = ax; AL = 0x0A;                            // mov al,0Ah
+                UpdateCounter0029AndTailKick_1000_6F78_016F78(0); // call 0x6F78
+                ax = 0x000A;                                  // mov ax,0Ah
+            }
+        }
+        ax = (ushort)(ax + 0x0014);                          // A1AA: add ax,14h
+        AX = ax;
+        UInt16[DS, 0x1176] = ax;                              // mov [0x1176],ax
+        byte bl;
+        if (ax < 0x0064) {                                    // xor bl,bl ; cmp ax,64h ; jnc A1BF
+            byte al = (byte)(ax / 6);                          // mov bl,6 ; div bl
+            byte ah = (byte)(ax % 6);
+            AX = (ushort)((ah << 8) | al);
+            bl = (byte)(0x80 - al);                            // mov bl,80h ; sub bl,al
+        } else {
+            bl = 0x00;
+        }
+        BL = bl;
+        UInt8[DS, 0x00D5] = bl;                                // A1BF: mov [0xd5],bl
+        return NearRet();                                      // retn
+    }
+
+    /// <summary>
     /// cs1:0x8E16 — <c>sub_ACE6</c>. Lays out wrapped text lines into the
     /// <c>0xA9D2</c> table. Head (<c>es=ds; [0x478C]=0; di=0xA9D2; dh=0;
     /// bx=[0x478F]; dl=0</c>) ported in C#; the <c>loc_ACF8</c> word-wrap
