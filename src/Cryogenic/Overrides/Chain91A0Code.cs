@@ -635,11 +635,42 @@ public partial class Overrides {
         DefineFunction(cs1, 0x171A, SceneParamDispatchLoopTop_1000_171A_01171A);
         DefineFunction(cs1, 0x171F, SceneParamDispatch_1000_171F_01171F);
         DefineFunction(cs1, 0x1771, SceneParamDispatchEntry_1000_1771_011771);
+        DefineFunction(cs1, 0x1803, GuardedScrollHelper_1000_1803_011803);
         DefineFunction(cs1, 0xD323, DialogueFlush_1000_D323_01D323);
         DefineFunction(cs1, 0x4F0C, Verb13Dispatch_1000_4F0C_014F0C);
         DefineFunction(cs1, 0x5B5D, StoreBxDxTo197x_1000_5B5D_015B5D);
         DefineFunction(cs1, 0x49D9, Verb13IndirectGate_1000_49D9_0149D9);
         DefineFunction(cs1, 0x2E52, SceneSetupThenChunk_1000_2E52_012E52);
+    }
+
+    /// <summary>
+    /// cs1:0x1803 — <c>sub_36D3</c> (task #14, the last 9FD8 side-effects
+    /// helper). Guarded re-entrant scroll/flush: returns immediately if
+    /// <c>[0x28E7]!=0</c> or <c>[0x00E8]==0</c> (<c>locret_36ED</c> 0x181D =
+    /// <c>retn</c>); else sets the re-entry guard <c>[0xCE66]=1</c>, runs
+    /// <c>sub_36EE</c>, and clears the guard. The guards + guard-flag are
+    /// ported in C#; <c>call sub_36EE</c> uses the call-continuation idiom
+    /// (push raw post-call IP 0x1819 = <c>dec byte [0xCE66]; retn</c>) so
+    /// the whole <c>sub_36EE→sub_368E/sub_10257</c> subtree runs in the
+    /// emulated stream — required: <c>sub_10257</c> (cs1:0xE387) is a
+    /// PIT-tick spin-wait that can only advance under the emulated timer
+    /// ISR (a C# busy-loop port would deadlock); it is intentionally left
+    /// exact-as-emulated (the documented §B/hardware residue, cf. sub_E240).
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0x1803
+    /// (<c>80 3E E7 28 00 75 13 80 3E E8 00 00 74 0C C6 06 66 CE 01
+    /// E8 05 00 FE 0E 66 CE C3</c>): call sub_36EE @0x1816 → 0x181E,
+    /// continuation @0x1819; locret_36ED 0x181D.</remarks>
+    public Action GuardedScrollHelper_1000_1803_011803(int gotoAddress) {
+        if (UInt8[DS, 0x28E7] != 0) {                      // cmp byte ds:28E7h,0 ; jnz locret_36ED
+            return NearRet();
+        }
+        if (UInt8[DS, 0x00E8] == 0) {                      // cmp byte ds:0E8h,0 ; jz locret_36ED
+            return NearRet();
+        }
+        UInt8[DS, 0xCE66] = 1;                              // mov byte ds:0CE66h,1
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0x1819;    // call sub_36EE (cont = raw dec [0xCE66]; retn)
+        return NearJump(0x181E);
     }
 
     /// <summary>
