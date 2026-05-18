@@ -377,6 +377,119 @@ public partial class Overrides {
         DefineFunction(cs1, 0x63C7, SpriteCellDispatch_1000_63C7_0163C7);
         DefineFunction(cs1, 0x7C8F, ScaledDistanceClamp_1000_7C8F_017C8F);
         DefineFunction(cs1, 0x7C93, ScaledDistanceClampCont_1000_7C93_017C93);
+        DefineFunction(cs1, 0x639A, ScanGlyphsLeft_1000_639A_01639A);
+        DefineFunction(cs1, 0x636A, ScanGlyphsRight_1000_636A_01636A);
+        DefineFunction(cs1, 0x634D, ClipAndScanBothDirs_1000_634D_01634D);
+        DefineFunction(cs1, 0x633B, ClipScanRowLoop_1000_633B_01633B);
+        DefineFunction(cs1, 0x5DCE, PlaceSceneLabels_1000_5DCE_015DCE);
+        DefineFunction(cs1, 0x62FE, VerbActionDispatch_1000_62FE_0162FE);
+    }
+
+    /// <summary>
+    /// cs1:0x639A — <c>sub_826A</c>. <c>xchg dx,si; xchg bx,cx</c> ported in
+    /// C#; the <c>call sub_D45B</c> + leftward es:[di] glyph-scan loop
+    /// (which calls the NearJump-delegating <c>sub_8297</c>) is delegated to
+    /// the emulated stream via <see cref="NearJump"/>(0x639E).
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0x639A
+    /// (<c>87 D6 87 D9 E8 EA 51 ...</c>): call sub_D45B @0x639E.</remarks>
+    public Action ScanGlyphsLeft_1000_639A_01639A(int gotoAddress) {
+        ushort t = DX; DX = SI; SI = t;                    // xchg dx,si
+        t = BX; BX = CX; CX = t;                            // xchg bx,cx
+        return NearJump(0x639E);                            // call sub_D45B + scan loop (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0x636A — <c>sub_823A</c>. Mirror of <c>sub_826A</c> (rightward
+    /// scan). <c>xchg dx,si; xchg bx,cx</c> in C#; <c>call sub_D45B</c> +
+    /// scan loop delegated via <see cref="NearJump"/>(0x636E).
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0x636A
+    /// (<c>87 D6 87 D9 E8 1A 52 ...</c>): call sub_D45B @0x636E.</remarks>
+    public Action ScanGlyphsRight_1000_636A_01636A(int gotoAddress) {
+        ushort t = DX; DX = SI; SI = t;                    // xchg dx,si
+        t = BX; BX = CX; CX = t;                            // xchg bx,cx
+        return NearJump(0x636E);                            // call sub_D45B + scan loop (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0x634D — <c>sub_821D</c>. <c>push bx; push dx;
+    /// call sub_81A6; pop si; pop cx</c> (a clip test that also shuffles
+    /// bx→cx/dx→si) ported in C# —
+    /// <see cref="PointInClipRect_1000_62D6_0162D6"/> is NearRet-inline and
+    /// sets CF, call-and-discard-safe. If clipped (CF) returns
+    /// (<c>locret_8239</c> 0x6369 = <c>retn</c>); else the
+    /// <c>sub_823A</c>/<c>sub_826A</c> scan pair (+ <c>clc</c>) is delegated
+    /// to the emulated stream via <see cref="NearJump"/>(0x6356).
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0x634D
+    /// (<c>53 52 E8 84 FF 5E 59 72 13 53 51 52 56 E8 0D 00 ...</c>):
+    /// call sub_81A6 @0x634F → 0x62D6; jb +0x13 → locret_8239 0x6369;
+    /// delegate point 0x6356.</remarks>
+    public Action ClipAndScanBothDirs_1000_634D_01634D(int gotoAddress) {
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = BX;       // push bx
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = DX;       // push dx
+        PointInClipRect_1000_62D6_0162D6(0);               // call sub_81A6 (NearRet-safe, sets CF)
+        SI = UInt16[SS, SP]; SP = (ushort)(SP + 2);        // pop si  (= old dx)
+        CX = UInt16[SS, SP]; SP = (ushort)(SP + 2);        // pop cx  (= old bx)
+        if (CarryFlag) {                                    // jb locret_8239
+            return NearRet();                               // 0x6369
+        }
+        return NearJump(0x6356);                            // sub_823A/sub_826A scan pair (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0x633B — <c>sub_820B</c>. <c>dx=[0x197C]; bx=[0x197E]-0x12</c>
+    /// ported in C#; the <c>loc_8216</c> loop (<c>call sub_821D; inc bx;
+    /// jnb loc_8216; retn</c>) is delegated to the emulated stream via
+    /// <see cref="NearJump"/>(0x6346).
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0x633B
+    /// (<c>8B 16 7C 19 8B 1E 7E 19 83 EB 12 E8 04 00 43 73 FA C3</c>):
+    /// loc_8216 @0x6346.</remarks>
+    public Action ClipScanRowLoop_1000_633B_01633B(int gotoAddress) {
+        DX = UInt16[DS, 0x197C];                            // mov dx,ds:197Ch
+        BX = (ushort)(UInt16[DS, 0x197E] - 0x12);           // mov bx,ds:197Eh ; sub bx,12h
+        return NearJump(0x6346);                            // loc_8216 loop (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0x5DCE — <c>sub_7C9E</c>, the <b>0x5DCE-campaign root</b> (L69) —
+    /// places scene labels. Head ported in C#: <c>al=[0x46EB];
+    /// or al,al; jns loc_7CAA</c>. The whole call-heavy body — the
+    /// <c>[0x46EB]&lt;0</c> <c>call sub_820B</c> prelude and the
+    /// <c>loc_7CC4</c> 0x100-stride scene-record loop (<c>sub_8199</c>,
+    /// <c>sub_7D12</c>, <c>sub_9B5F</c>, §A <c>sub_E213</c>) — is delegated
+    /// to the emulated stream via <see cref="NearJump"/> (0x5DD5 when
+    /// <c>al&lt;0</c> signed, else loc_7CAA 0x5DDA).
+    /// </summary>
+    /// <remarks>Asm head byte-verified vs cs1.bin@0x5DCE
+    /// (<c>A0 EB 46 0A C0 79 05 50 E8 62 05 58 BF C0 A5 24 40 74 10</c>):
+    /// jns +5 → loc_7CAA 0x5DDA.</remarks>
+    public Action PlaceSceneLabels_1000_5DCE_015DCE(int gotoAddress) {
+        AL = UInt8[DS, 0x46EB];                             // mov al,ds:46EBh
+        if ((AL & 0x80) == 0) {                             // or al,al ; jns loc_7CAA (SF=0)
+            return NearJump(0x5DDA);                         // loc_7CAA (emulated)
+        }
+        return NearJump(0x5DD5);                             // push ax; call sub_820B; ... (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0x62FE — <c>loc_81CE</c> (the verb-13 action-dispatch chunk,
+    /// task #12/#64). First op is <c>call sub_8199</c> (cs1:0x62C9 — a
+    /// NearJump-returning port, call-and-discard-unsafe), so it is modelled
+    /// with the call-continuation idiom: push the raw post-call IP 0x6301,
+    /// <see cref="NearJump"/> to sub_8199; the <c>ax=0x36; jmp 0x6322</c>
+    /// convergence + the <c>0xC137</c>/<c>0xC1F4</c>/<c>0xC30D</c> dispatch
+    /// + <c>jmp sub_E00E</c>(0xC13E, now C#) tail run in the emulated
+    /// stream.
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0x62FE
+    /// (<c>E8 C8 FF B8 36 00 EB 1C ...</c>): call sub_8199 @0x62FE →
+    /// 0x62C9, continuation @0x6301.</remarks>
+    public Action VerbActionDispatch_1000_62FE_0162FE(int gotoAddress) {
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0x6301;   // call sub_8199 (cont = raw dispatch)
+        return NearJump(0x62C9);
     }
 
     /// <summary>
