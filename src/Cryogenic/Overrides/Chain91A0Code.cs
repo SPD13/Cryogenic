@@ -81,6 +81,166 @@ public partial class Overrides {
         DefineFunction(cs1, 0x9D6A, EmitGlyphList_1000_9D6A_019D6A);
         DefineFunction(cs1, 0x9D6F, EmitGlyphListLoop_1000_9D6F_019D6F);
         DefineFunction(cs1, 0x8ED3, MeasureTextWidth_1000_8ED3_018ED3);
+        DefineFunction(cs1, 0x8F28, SetupTextBoxGeometry_1000_8F28_018F28);
+        DefineFunction(cs1, 0x8E16, LayoutTextLines_1000_8E16_018E16);
+        DefineFunction(cs1, 0x79EE, MeasureMenuEntry_1000_79EE_0179EE);
+        DefineFunction(cs1, 0x8CCD, BuildMenuLayout_1000_8CCD_018CCD);
+        DefineFunction(cs1, 0x8B11, RenderDialogueBox_1000_8B11_018B11);
+        // cs1:0xC370 sub_E240 — intentionally NOT overridden: pure §A
+        // orchestrator (first op is a §A SS-far call; L87 with multiple
+        // interleaved §A SS-far calls + lds + bp-frame + 2 loops, no
+        // portable compute head). Exact-as-emulated — a C# shell would
+        // add zero fidelity and a full multi-§A-continuation
+        // reconstruction would only add fragility. Reached only via
+        // sub_ADF8's emulated-delegated tail, where it executes exactly.
+    }
+
+    /// <summary>
+    /// cs1:0x8E16 — <c>sub_ACE6</c>. Lays out wrapped text lines into the
+    /// <c>0xA9D2</c> table. Head (<c>es=ds; [0x478C]=0; di=0xA9D2; dh=0;
+    /// bx=[0x478F]; dl=0</c>) ported in C#; the <c>loc_ACF8</c> word-wrap
+    /// loop — which calls the continuation-unsafe <c>sub_AD6E</c>
+    /// (cs1:0x8E9E, NearJump path) and <c>sub_ADA3</c> — is delegated to
+    /// the emulated stream via <see cref="NearJump"/>(0x8E28).
+    /// </summary>
+    /// <remarks>Asm head byte-verified vs cs1.bin@0x8E16
+    /// (<c>1E 07 C6 06 8C 47 00 BF D2 A9 32 F6 8B 1E 8F 47 32 D2</c>);
+    /// loc_ACF8 @0x8E28.</remarks>
+    public Action LayoutTextLines_1000_8E16_018E16(int gotoAddress) {
+        ES = DS;                                       // push ds ; pop es
+        UInt8[DS, 0x478C] = 0;                          // mov byte ds:478Ch,0
+        DI = 0xA9D2;                                    // mov di,0A9D2h
+        DH = 0;                                          // xor dh,dh
+        BX = UInt16[DS, 0x478F];                         // mov bx,ds:478Fh
+        DL = 0;                                          // xor dl,dl
+        return NearJump(0x8E28);                          // loc_ACF8 (word-wrap loop, emulated)
+    }
+
+    /// <summary>
+    /// cs1:0x79EE — <c>sub_98BE</c> (L108). Records <c>[0x46EF]=si</c> then
+    /// models <c>call sub_87E7</c> (cs1:0x6917) and delegates the whole
+    /// L108 body (the menu-geometry branch tree + deeper calls) to the
+    /// emulated stream: push the post-call IP 0x79F5, <see cref="NearJump"/>
+    /// to sub_87E7 — there is no portable compute head and the body is
+    /// call/branch-dominated, faithful only when emulated.
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0x79EE
+    /// (<c>89 36 EF 46 E8 22 EF ...</c>): call sub_87E7 @0x79F2 → 0x6917,
+    /// continuation @0x79F5.</remarks>
+    public Action MeasureMenuEntry_1000_79EE_0179EE(int gotoAddress) {
+        UInt16[DS, 0x46EF] = SI;                         // mov ds:46EFh,si
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0x79F5; // call sub_87E7 (cont = raw body)
+        return NearJump(0x6917);
+    }
+
+    /// <summary>
+    /// cs1:0x8CCD — <c>sub_AB9D</c> (L130). Sets <c>[0x4799]=9</c>,
+    /// <c>[0xDBE4]=0xF0</c>, then branches on <c>[0x46EB]</c>/<c>[0x46EF]</c>.
+    /// The two stores and the branch decision are ported in C#; all three
+    /// targets (loc_ABCB 0x8CFB, loc_ABC5 0x8CF5, and the
+    /// <c>call sub_10140/sub_98BE/sub_10153</c> body at 0x8CE6) are
+    /// delegated to the emulated stream via <see cref="NearJump"/>
+    /// (call/§A-heavy, incl. the continuation-unsafe <c>sub_98BE</c>).
+    /// </summary>
+    /// <remarks>Asm head byte-verified vs cs1.bin@0x8CCD
+    /// (<c>C6 06 99 47 09 C7 06 E4 DB F0 00 80 3E EB 46 00 74 1C
+    /// 83 3E EF 46 00 75 0F</c>): <c>jz</c>→0x8CFB, <c>jnz</c>→0x8CF5,
+    /// fall→0x8CE6.</remarks>
+    public Action BuildMenuLayout_1000_8CCD_018CCD(int gotoAddress) {
+        UInt8[DS, 0x4799] = 9;                           // mov byte ds:4799h,9
+        UInt16[DS, 0xDBE4] = 0x00F0;                      // mov word ds:0DBE4h,0F0h
+        if (UInt8[DS, 0x46EB] == 0) {                    // cmp byte ds:46EBh,0 ; jz loc_ABCB
+            return NearJump(0x8CFB);
+        }
+        if (UInt16[DS, 0x46EF] != 0) {                   // cmp word ds:46EFh,0 ; jnz loc_ABC5
+            return NearJump(0x8CF5);
+        }
+        return NearJump(0x8CE6);                          // call sub_10140 ... (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0x8B11 — <c>sub_A9E1</c>, the <b>0x8B11-campaign root</b> (L210).
+    /// A pure call-orchestrator (<c>push si; call sub_AB5A; pop si;
+    /// call sub_AB9D; jb nullsub_9; call sub_ADF8; call sub_ACC0; ...</c>)
+    /// with no compute head. Models the first <c>push si; call sub_AB5A</c>
+    /// faithfully — push <c>si</c>, push the post-call IP 0x8B15 — then
+    /// <see cref="NearJump"/> to <c>sub_AB5A</c> (cs1:0x8C8A); the raw
+    /// continuation (pop si; the L210 orchestration body) executes in the
+    /// emulated stream where every callee — incl. the C# ports
+    /// <c>sub_AB5A</c>/<c>sub_AB9D</c>/<c>sub_ADF8</c> reached via real
+    /// emulated calls — dispatches exactly. (Reimplementing the L210
+    /// call sequence via per-call continuations would add fragility with
+    /// zero fidelity gain — same exact discipline as the other campaign
+    /// roots.)
+    /// </summary>
+    /// <remarks>Asm head byte-verified vs cs1.bin@0x8B11
+    /// (<c>56 E8 75 01 5E E8 B4 01 72 F5 E8 0A 04 E8 CF 02 ...</c>):
+    /// call sub_AB5A @0x8B12 → 0x8C8A, continuation @0x8B15
+    /// (<c>5E pop si</c> then the body).</remarks>
+    public Action RenderDialogueBox_1000_8B11_018B11(int gotoAddress) {
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = SI;     // push si
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0x8B15; // call sub_AB5A (cont = raw L210 body)
+        return NearJump(0x8C8A);
+    }
+
+    /// <summary>
+    /// cs1:0x8F28 — <c>sub_ADF8</c>. Builds the text-box geometry record at
+    /// <c>ds:0x1BE2</c> from the 4-word frame at <c>ss:[bp+0..6]</c>:
+    /// emits <c>x,y</c> (and derives the <c>[0x478D..0x4797]</c> bound
+    /// globals), accumulates <c>dx/bx</c>, clamps width to 0x140, and emits
+    /// the clamped <c>w,h</c>. This whole coordinate-setup head is ported in
+    /// C#; the branch tree from <c>cmp byte [0x46EB],0</c> (cs1:0x8F80) —
+    /// which leads to <c>sub_AEA1</c>, <c>loc_AEC5</c>, the §A
+    /// <c>call [0x3919]</c>, <c>sub_E007</c>/<c>sub_E240</c> and the
+    /// FUNCTION CHUNK @0x8FF5 — is delegated to the emulated stream via
+    /// <see cref="NearJump"/>(0x8F80) (call/§A/chunk-heavy, faithful only
+    /// emulated).
+    /// </summary>
+    /// <remarks>
+    /// Asm head byte-verified vs cs1.bin@0x8F28
+    /// (<c>89 2E 9E 47 BF E2 1B 1E 07 8B 46 00 AB 8B D0 03 06 84 47
+    /// A3 91 47 A3 95 47 8B 46 02 AB 8B D8 03 06 88 47 A3 93 47 A3 97 47
+    /// 8B 46 04 03 D0 2B 06 84 47 2B 06 86 47 A3 8F 47 8B 46 06 03 D8
+    /// 2B 06 88 47 2B 06 8A 47 A3 8D 47 8B C2 3D 40 01 72 03 B8 40 01 AB
+    /// 8B C3 AB 80 3E EB 46 00</c>): clamp <c>jb loc_AE4B</c> → 0x8F7B;
+    /// delegate point 0x8F80. <c>[bp+n]</c> is SS-relative.
+    /// </remarks>
+    public Action SetupTextBoxGeometry_1000_8F28_018F28(int gotoAddress) {
+        UInt16[DS, 0x479E] = BP;                          // mov ds:479Eh,bp
+        DI = 0x1BE2;                                       // mov di,1BE2h
+        ES = DS;                                            // push ds ; pop es
+        ushort ax = UInt16[SS, (ushort)(BP + 0)];          // mov ax,[bp+0]
+        UInt16[ES, DI] = ax; DI = (ushort)(DI + 2);        // stosw
+        DX = ax;                                            // mov dx,ax
+        ushort t = (ushort)(ax + UInt16[DS, 0x4784]);      // add ax,ds:4784h
+        UInt16[DS, 0x4791] = t;                             // mov ds:4791h,ax
+        UInt16[DS, 0x4795] = t;                             // mov ds:4795h,ax
+        ax = UInt16[SS, (ushort)(BP + 2)];                 // mov ax,[bp+2]
+        UInt16[ES, DI] = ax; DI = (ushort)(DI + 2);        // stosw
+        BX = ax;                                            // mov bx,ax
+        t = (ushort)(ax + UInt16[DS, 0x4788]);             // add ax,ds:4788h
+        UInt16[DS, 0x4793] = t;                             // mov ds:4793h,ax
+        UInt16[DS, 0x4797] = t;                             // mov ds:4797h,ax
+        ax = UInt16[SS, (ushort)(BP + 4)];                 // mov ax,[bp+4]
+        DX = (ushort)(DX + ax);                             // add dx,ax
+        ax = (ushort)(ax - UInt16[DS, 0x4784]);            // sub ax,ds:4784h
+        ax = (ushort)(ax - UInt16[DS, 0x4786]);            // sub ax,ds:4786h
+        UInt16[DS, 0x478F] = ax;                            // mov ds:478Fh,ax
+        ax = UInt16[SS, (ushort)(BP + 6)];                 // mov ax,[bp+6]
+        BX = (ushort)(BX + ax);                             // add bx,ax
+        ax = (ushort)(ax - UInt16[DS, 0x4788]);            // sub ax,ds:4788h
+        ax = (ushort)(ax - UInt16[DS, 0x478A]);            // sub ax,ds:478Ah
+        UInt16[DS, 0x478D] = ax;                            // mov ds:478Dh,ax
+        ax = DX;                                            // mov ax,dx
+        if (ax >= 0x0140) {                                 // cmp ax,140h ; jb loc_AE4B
+            ax = 0x0140;                                    // mov ax,140h
+        }
+        AX = ax;
+        UInt16[ES, DI] = ax; DI = (ushort)(DI + 2);        // loc_AE4B: stosw
+        ax = BX;                                            // mov ax,bx
+        AX = ax;
+        UInt16[ES, DI] = ax; DI = (ushort)(DI + 2);        // stosw
+        return NearJump(0x8F80);                            // cmp byte [0x46EB],0 ... (emulated tail)
     }
 
     /// <summary>
