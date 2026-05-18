@@ -176,6 +176,7 @@ public partial class Overrides : CSharpOverrideHelper {
 		DefineSaveLoadCodeOverrides();              // Phase 38
 		DefineChain91A0CodeOverrides();             // Phase 27: 0x91A0 deep-chain campaign
 		DefineChain978ECodeOverrides();             // Phase 27: 0x978E deep-chain campaign
+		DefineChain9EFDCodeOverrides();             // Phase 27: 0x9EFD deep-chain campaign
 
 		DefineDriversRemapping();
 		DetectDriversEntryPoints();

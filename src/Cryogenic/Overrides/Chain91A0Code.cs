@@ -45,6 +45,142 @@ public partial class Overrides {
     }
 
     /// <summary>
+    /// Registers the <c>cs1:0x9EFD</c> (<c>sub_BDCD</c>) deep-chain campaign
+    /// overrides (10-node bounded subtree; <c>tools/chain_tree.py</c>).
+    /// </summary>
+    public void DefineChain9EFDCodeOverrides() {
+        DefineFunction(cs1, 0xD617, SaveListReloadAx90_1000_D617_01D617);
+        DefineFunction(cs1, 0x9F1C, ResetSpeakerState_1000_9F1C_019F1C);
+        DefineFunction(cs1, 0x9F1F, ResetSpeakerStateCont_1000_9F1F_019F1F);
+        DefineFunction(cs1, 0xA90B, SaveDirInit_1000_A90B_01A90B);
+        DefineFunction(cs1, 0xA8BC, FormatSaveSlotName_1000_A8BC_01A8BC);
+    }
+
+    /// <summary>
+    /// cs1:0xD617 — <c>sub_F4E7</c>: <c>push ax; mov ax,0x90;
+    /// jmp loc_F4F1</c> — the AX=0x90 alternate entry of the shared
+    /// <c>sub_F4ED</c> body (loc_F4F1 cs1:0xD621; cf. the AX=0x9F entry
+    /// <see cref="RefreshOnMenuTypeChange_1000_D61D_01D61D"/>). Models
+    /// <c>push ax</c> on the emulated stack then
+    /// <see cref="NearJump"/>(0xD621) — the loc_F4F1 raw-asm body runs
+    /// exactly as it does for 0xD61D.
+    /// </summary>
+    /// <remarks>Asm 6 B, byte-verified cs1.bin@0xD617:
+    /// <c>50 B8 90 00 EB 04</c> (jmp +4 → 0xD61D+? ; 0xD61D+0x0A=0xD621).</remarks>
+    public Action SaveListReloadAx90_1000_D617_01D617(int gotoAddress) {
+        SP = (ushort)(SP - 2);
+        UInt16[SS, SP] = AX;          // push ax
+        AX = 0x0090;                  // mov ax,90h
+        return NearJump(0xD621);      // jmp loc_F4F1 (shared sub_F4ED body, emulated)
+    }
+
+    /// <summary>
+    /// cs1:0x9F1C — <c>sub_BDEC</c> entry. Models <c>call sub_B067</c>
+    /// (cs1:0x9197 GuardSceneNotTerminator — has a NearJump(0x91A0) path so
+    /// call-and-discard is unsafe) via the near-call-continuation idiom: push
+    /// the post-call IP 0x9F1F, <see cref="NearJump"/> to sub_B067.
+    /// </summary>
+    /// <remarks>Asm: <c>9F1C: E8 78 F2 call sub_B067 (0x9197)</c>
+    /// (byte-verified cs1.bin@0x9F1C; <c>0x9F1F-0xD88=0x9197</c>).</remarks>
+    public Action ResetSpeakerState_1000_9F1C_019F1C(int gotoAddress) {
+        SP = (ushort)(SP - 2);
+        UInt16[SS, SP] = 0x9F1F;      // push continuation IP
+        return NearJump(0x9197);      // call sub_B067
+    }
+
+    /// <summary>
+    /// cs1:0x9F1F — continuation of <see cref="ResetSpeakerState_1000_9F1C_019F1C"/>.
+    /// <c>or byte ds:47D1h,10h</c> ported in C#, then delegates the rest
+    /// (<c>call sub_B94B; xor ah,ah; call sub_B930; mov ds:47C6h,si; retn</c>)
+    /// to the emulated stream via <see cref="NearJump"/>(0x9F24) — sub_B94B
+    /// (0x9A7B) has a NearJump(0xE3B7) path so call-and-discard is unsafe;
+    /// it dispatches correctly when reached through the real emulated call.
+    /// </summary>
+    /// <remarks>Asm byte-verified cs1.bin@0x9F1F:
+    /// <c>80 0E D1 47 10</c> (or byte [0x47D1],10h) then 0x9F24
+    /// (<c>E8 54 FB call sub_B94B</c>).</remarks>
+    public Action ResetSpeakerStateCont_1000_9F1F_019F1F(int gotoAddress) {
+        UInt8[DS, 0x47D1] = (byte)(UInt8[DS, 0x47D1] | 0x10);   // or byte ds:47D1h,10h
+        return NearJump(0x9F24);      // call sub_B94B onward (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0xA90B — <c>sub_C7DB</c>: zeroes the save-directory scratch
+    /// (<c>dx=0x37DA; [0x3811]/[0x3817]/[0x381F]=0; [0x3823]=0</c>) then
+    /// <c>call subLoadSavegame; jb locret_C7DA; ...; les dx,[0x3811];
+    /// fall into sub_C80F</c>. The zeroing head is ported in C#; the rest is
+    /// delegated to the emulated stream via <see cref="NearJump"/>(0xA91C)
+    /// because <c>subLoadSavegame</c> (cs1:0xF1FB) is still a symbolic-stub
+    /// (asm) routine and the tail falls through into <c>sub_C80F</c>
+    /// (cs1:0xA93F).
+    /// </summary>
+    /// <remarks>Asm byte-verified cs1.bin@0xA90B:
+    /// <c>BA DA 37 33 C0 A3 11 38 A3 17 38 A3 1F 38 A2 23 38 E8 DC 48 ...</c>
+    /// (0xA91C = <c>E8 DC 48 call subLoadSavegame</c>;
+    /// locret_C7DA 0xA90A = <c>C3</c>).</remarks>
+    public Action SaveDirInit_1000_A90B_01A90B(int gotoAddress) {
+        DX = 0x37DA;                   // mov dx,37DAh
+        AX = 0;                        // xor ax,ax
+        UInt16[DS, 0x3811] = 0;        // mov ds:3811h,ax
+        UInt16[DS, 0x3817] = 0;        // mov ds:3817h,ax
+        UInt16[DS, 0x381F] = 0;        // mov ds:381Fh,ax
+        UInt8[DS, 0x3823] = 0;         // mov ds:3823h,al
+        return NearJump(0xA91C);       // call subLoadSavegame onward (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0xA8BC — <c>sub_C78C</c>: formats the 8.3-style save-slot display
+    /// name into the buffer at <c>ds:0x37DB</c> — letter <c>'A'+bl</c>, the
+    /// hex nibbles of <c>bh</c>/<c>bl</c> via
+    /// <see cref="Unknown_1000_A8B1_01A8B1"/> (cs1:0xA8B1 sub_C781, NearRet-
+    /// inline, call-and-discard-safe), an <c>'O'</c>/<c>'I'</c> flag from
+    /// <c>[0xEA]/[6]/[4]</c>, and a trailing space-or-letter. Fully ported.
+    /// </summary>
+    /// <remarks>
+    /// Asm (L46) byte-verified cs1.bin@0xA8BC
+    /// (<c>BF DB 37 1E 07 50 8A C3 04 41 AA 47 47 AA 5B B1 04 8A C7 E8 DF FF
+    /// AA 8A C3 D2 E8 E8 D7 FF AA 8A C3 E8 D1 FF AA B0 4F 80 3E EA 00 00 7F 10
+    /// 80 3E 06 00 80 75 09 80 3E 04 00 01 74 02 B0 49 AA B0 20 D2 EF
+    /// 0A 3E E0 47 74 04 8A C7 04 41 AA C3</c>). <c>al=0x49</c> iff
+    /// <c>NOT([0xEA]&gt;0 signed) &amp;&amp; [6]==0x80 &amp;&amp; [4]!=1</c>.
+    /// </remarks>
+    public Action FormatSaveSlotName_1000_A8BC_01A8BC(int gotoAddress) {
+        DI = 0x37DB;                                   // mov di,37DBh
+        ES = DS;                                       // push ds ; pop es
+        ushort savedAx = AX;                           // push ax
+        AL = (byte)(BL + 0x41);                        // mov al,bl ; add al,41h
+        UInt8[ES, DI] = AL; DI = (ushort)(DI + 1);     // stosb
+        DI = (ushort)(DI + 2);                          // inc di ; inc di
+        UInt8[ES, DI] = AL; DI = (ushort)(DI + 1);     // stosb
+        BX = savedAx;                                  // pop bx
+        CL = 4;                                         // mov cl,4
+        AL = BH;                                         // mov al,bh
+        Unknown_1000_A8B1_01A8B1(0);                    // call sub_C781
+        UInt8[ES, DI] = AL; DI = (ushort)(DI + 1);     // stosb
+        AL = (byte)(BL >> 4);                            // mov al,bl ; shr al,cl(=4)
+        Unknown_1000_A8B1_01A8B1(0);                    // call sub_C781
+        UInt8[ES, DI] = AL; DI = (ushort)(DI + 1);     // stosb
+        AL = BL;                                         // mov al,bl
+        Unknown_1000_A8B1_01A8B1(0);                    // call sub_C781
+        UInt8[ES, DI] = AL; DI = (ushort)(DI + 1);     // stosb
+        AL = 0x4F;                                       // mov al,4Fh ('O')
+        if (!((sbyte)UInt8[DS, 0x00EA] > 0)             // cmp [0xEA],0 ; jg loc_C7CA
+              && UInt8[DS, 0x0006] == 0x80              // cmp [6],80h ; jnz loc_C7CA
+              && UInt8[DS, 0x0004] != 0x01) {           // cmp [4],1 ; jz loc_C7CA
+            AL = 0x49;                                   // mov al,49h ('I')
+        }
+        UInt8[ES, DI] = AL; DI = (ushort)(DI + 1);     // loc_C7CA: stosb
+        AL = 0x20;                                       // mov al,20h (' ')
+        byte bh = (byte)((BH >> 4) | UInt8[DS, 0x47E0]); // shr bh,cl ; or bh,ds:47E0h
+        BH = bh;
+        if (bh != 0) {                                   // jz loc_C7D9
+            AL = (byte)(bh + 0x41);                      // mov al,bh ; add al,41h
+        }
+        UInt8[ES, DI] = AL; DI = (ushort)(DI + 1);     // loc_C7D9: stosb
+        return NearRet();                                // locret_C7DA: retn
+    }
+
+    /// <summary>
     /// cs1:0x978E — <c>sub_B65E</c>, the 0x978E-campaign root. Runs
     /// <c>sub_699A</c> then bails if <c>[0x47C4]==0xFFFF</c>
     /// (<c>locret_B69E</c> 0x97CE = <c>retn</c>); otherwise rebuilds the
