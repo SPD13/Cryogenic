@@ -96,6 +96,85 @@ public partial class Overrides {
     }
 
     /// <summary>
+    /// Registers the <c>cs1:0xC13E</c> (<c>sub_E00E</c>) deep-chain campaign
+    /// overrides (10-node bounded subtree; <c>tools/chain_tree.py</c>).
+    /// </summary>
+    public void DefineChainC13ECodeOverrides() {
+        DefineFunction(cs1, 0xC1AA, ToggleDbb4FromCounter_1000_C1AA_01C1AA);
+        DefineFunction(cs1, 0xEBAA, ClearAndWalkEsList_1000_EBAA_01EBAA);
+        DefineFunction(cs1, 0xF229, ReloadSaveThenCopy36C4_1000_F229_01F229);
+    }
+
+    /// <summary>
+    /// cs1:0xC1AA — <c>sub_E07A</c>. Snapshots the low byte of the
+    /// <c>[0x2784]</c> counter into <c>[0xDBB4]</c> (<c>xchg</c>); if it was
+    /// unchanged returns (<c>locret_E079</c> 0xC1A9 = <c>retn</c>),
+    /// otherwise sets <c>si=2</c> and falls through into <c>sub_E08A</c>
+    /// (cs1:0xC1BA, delegated to the emulated stream via
+    /// <see cref="NearJump"/>).
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0xC1AA
+    /// (<c>A1 84 27 8A E0 86 06 B4 DB 3A C4 74 F2 BE 02 00</c>):
+    /// <c>jz -0xE</c> → locret_E079 0xC1A9; no retn, falls into 0xC1BA.</remarks>
+    public Action ToggleDbb4FromCounter_1000_C1AA_01C1AA(int gotoAddress) {
+        AX = UInt16[DS, 0x2784];                          // mov ax,ds:2784h
+        AH = AL;                                           // mov ah,al
+        byte old = UInt8[DS, 0xDBB4];                      // xchg al,ds:0DBB4h
+        UInt8[DS, 0xDBB4] = AL;
+        AL = old;
+        if (AL == AH) {                                    // cmp al,ah ; jz locret_E079
+            return NearRet();
+        }
+        SI = 2;                                            // mov si,2
+        return NearJump(0xC1BA);                            // fall into sub_E08A (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0xEBAA — <c>sub_10A7A</c>. Walks/clears an <c>es:</c> linked list:
+    /// per node take-and-zero <c>es:[si]</c>, <c>bx&lt;&lt;=1</c> (CF = old
+    /// bit 15 = sentinel), <c>si = bx-2</c>; continues while CF==0,
+    /// returns when the sentinel bit is set. Call-free — fully ported as a
+    /// C# loop.
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0xEBAA
+    /// (<c>33 DB 26 87 1C D1 E3 8B F3 4E 4E 73 F3 C3</c>):
+    /// <c>jnb sub_10A7A</c> loops while CF==0 (CF from <c>shl bx,1</c>;
+    /// the two <c>dec si</c> don't affect CF).</remarks>
+    public Action ClearAndWalkEsList_1000_EBAA_01EBAA(int gotoAddress) {
+        while (true) {
+            ushort bx = UInt16[ES, SI];                    // xor bx,bx ; xchg bx,es:[si]
+            UInt16[ES, SI] = 0;
+            bool cf = (bx & 0x8000) != 0;                   // shl bx,1 -> CF = old bit15
+            bx = (ushort)(bx << 1);
+            BX = bx;
+            SI = (ushort)(bx - 2);                          // mov si,bx ; dec si ; dec si
+            if (cf) {                                       // jnb sub_10A7A (loop while CF==0)
+                return NearRet();
+            }
+        }
+    }
+
+    /// <summary>
+    /// cs1:0xF229 — <c>sub_110F9</c>. <c>call subLoadSavegame</c> then on
+    /// success returns, else copies the 12-byte header (<c>ds:dx</c> →
+    /// <c>0x36C4</c>), points <c>[0x3CBC]</c> at <c>0x36B4</c> and
+    /// <c>jmp</c>s out. The first op is the call; <c>subLoadSavegame</c>
+    /// (cs1:0xF1FB) is still a symbolic-stub (asm) routine, so this is
+    /// modelled with the call-continuation idiom: push the raw post-call IP
+    /// 0xF22C, <see cref="NearJump"/> to subLoadSavegame; the
+    /// <c>jb/retn</c> + <c>rep movsb</c> + out-jmp tail runs in the emulated
+    /// stream.
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0xF229
+    /// (<c>E8 CF FF 72 01 C3 8B F2 BF C4 36 B9 0C 00 1E 07 F3 A4
+    /// C7 06 BC 3C B4 36 E9 F6 0D</c>): call subLoadSavegame @0xF229 →
+    /// 0xF1FB, continuation @0xF22C.</remarks>
+    public Action ReloadSaveThenCopy36C4_1000_F229_01F229(int gotoAddress) {
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0xF22C;   // call subLoadSavegame (cont = raw tail)
+        return NearJump(0xF1FB);
+    }
+
+    /// <summary>
     /// Registers the Phase-27 verb-13 / verb-8 helper quick-win overrides.
     /// </summary>
     public void DefineVerbHelpersCodeOverrides() {
