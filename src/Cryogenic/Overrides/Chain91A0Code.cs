@@ -40,6 +40,116 @@ public partial class Overrides {
         DefineFunction(cs1, 0x9BAC, SaveSiCallGuard_1000_9BAC_019BAC);
         DefineFunction(cs1, 0xC4DD, CursorGuardThenRectRegs_1000_C4DD_01C4DD);
         DefineFunction(cs1, 0x994F, ComputeBpFromMenuState_1000_994F_01994F);
+        DefineFunction(cs1, 0x9908, BuildSceneRecordPtr_1000_9908_019908);
+        DefineFunction(cs1, 0x978E, DialogueSceneRebuild_1000_978E_01978E);
+    }
+
+    /// <summary>
+    /// cs1:0x978E — <c>sub_B65E</c>, the 0x978E-campaign root. Runs
+    /// <c>sub_699A</c> then bails if <c>[0x47C4]==0xFFFF</c>
+    /// (<c>locret_B69E</c> 0x97CE = <c>retn</c>); otherwise rebuilds the
+    /// dialogue scene (<c>sub_B070</c>, <c>sub_B7D8</c>, conditional
+    /// <c>sub_E347</c>/<c>sub_BA7C</c>/<c>sub_AEF5</c>, <c>sub_DFC4</c>,
+    /// <c>jmp sub_E3AD</c>). The <c>sub_699A</c> call (cs1:0x4ACA, NearRet-inline,
+    /// call-and-discard-safe) and the <c>[0x47C4]==0xFFFF</c> early-out are
+    /// ported in C#; the call-heavy body is delegated to the emulated stream
+    /// via <see cref="NearJump"/>(0x9799) because every body callee is
+    /// continuation-unsafe (<c>sub_B070</c>/0x91A0 &amp; <c>sub_B7D8</c>/0x9908
+    /// have NearJump paths, <c>sub_BA7C</c>/0x9BAC is a near-call-continuation
+    /// port, <c>sub_E347</c>/0xC477 &amp; <c>sub_AEF5</c>/0x9025 &amp;
+    /// <c>sub_DFC4</c>/0xC0F4 are §A FarJump) — uniform with the 0x91A0
+    /// campaign / sub_A77F technique.
+    /// </summary>
+    /// <remarks>
+    /// Asm byte-verified vs cs1.bin@0x978E
+    /// (<c>E8 39 B3 A1 C4 47 3D FF FF 74 35 E8 04 FA ...</c>):
+    /// <code>
+    /// 978E: E8 39 B3    call sub_699A (0x4ACA)
+    /// 9791: A1 C4 47    mov ax,ds:47C4h
+    /// 9794: 3D FF FF    cmp ax,0FFFFh
+    /// 9797: 74 35       jz locret_B69E (0x97CE=retn)
+    /// 9799: E8 04 FA    call sub_B070 (0x91A0)   ; body delegated from here
+    /// ...   (call sub_B7D8 ; [0x479E] checks ; sub_E347/BA7C/AEF5 ;
+    ///        loc_B698: call sub_DFC4 ; jmp sub_E3AD)
+    /// </code>
+    /// </remarks>
+    public Action DialogueSceneRebuild_1000_978E_01978E(int gotoAddress) {
+        SetUnknown11CATo1_1000_4ACA_14ACA(0);     // call sub_699A (NearRet-inline)
+        AX = UInt16[DS, 0x47C4];                    // mov ax,ds:47C4h
+        if (AX == 0xFFFF) {                          // cmp ax,0FFFFh ; jz locret_B69E
+            return NearRet();
+        }
+        return NearJump(0x9799);                      // call sub_B070 onward (emulated body)
+    }
+
+    /// <summary>
+    /// cs1:0x9908 — <c>sub_B7D8</c>. Builds the scene/dialogue record pointer:
+    /// <c>si=[0x47CA]; es=[0xDBB2]; bp = sub_B81F();</c> set
+    /// <c>[0x47D1]=0xC0</c>, <c>[0x47CE]=([0x478C]&amp;0xFF)&lt;&lt;2</c>,
+    /// <c>si += es:[bp+si]</c>, <c>sub_B83C()</c>, <c>[0x47C8]=si</c>,
+    /// take-and-swap <c>[0x47C6]</c>; bail (CF unchanged → <c>locret_B81E</c>
+    /// 0x994E = <c>retn</c>) if the swapped value was non-zero or
+    /// <c>[0x00EA]&gt;0</c> (signed) or <c>sub_314C(ax=[0x47C4])</c> sets CF;
+    /// otherwise falls through into <c>sub_B815</c> (cs1:0x9945). Fully ported
+    /// in C# — all three callees (<see cref="ComputeBpFromMenuState_1000_994F_01994F"/>
+    /// 0x994F, <c>sub_B83C</c>/0x996C <c>Skip32StringsIf47D0</c>,
+    /// <c>sub_314C</c>/0x127C <c>CheckAl4AndByte2ARange</c>) are NearRet-inline
+    /// so call-and-discard-safe; the fall-through is the exact
+    /// <see cref="NearJump"/>(0x9945) model.
+    /// </summary>
+    /// <remarks>
+    /// Asm byte-verified vs cs1.bin@0x9908
+    /// (<c>8B 36 CA 47 8E 06 B2 DB E8 3C 00 C6 06 D1 47 C0 A0 8C 47 32 E4
+    /// D1 E0 D1 E0 A3 CE 47 26 03 32 E8 42 00 89 36 C8 47 87 36 C6 47 0B F6
+    /// 75 18 80 3E EA 00 00 7F 11 A1 C4 47 E8 39 79 72 09</c>):
+    /// <code>
+    /// 9908: 8B 36 CA 47    mov si,ds:47CAh
+    /// 990C: 8E 06 B2 DB    mov es,ds:0DBB2h
+    /// 9910: E8 3C 00       call sub_B81F (0x994F)
+    /// 9913: C6 06 D1 47 C0 mov byte ds:47D1h,0C0h
+    /// 9918: A0 8C 47       mov al,ds:478Ch
+    /// 991B: 32 E4          xor ah,ah
+    /// 991D: D1 E0 / D1 E0  shl ax,1 ; shl ax,1
+    /// 9921: A3 CE 47       mov ds:47CEh,ax
+    /// 9924: 26 03 32       add si,es:[bp+si]
+    /// 9927: E8 42 00       call sub_B83C (0x996C)
+    /// 992A: 89 36 C8 47    mov ds:47C8h,si
+    /// 992E: 87 36 C6 47    xchg si,ds:47C6h
+    /// 9932: 0B F6 / 75 18  or si,si ; jnz locret_B81E (0x994E)
+    /// 9936: 80 3E EA 00 00 cmp byte ds:0EAh,0
+    /// 993B: 7F 11          jg locret_B81E (0x994E)
+    /// 993D: A1 C4 47       mov ax,ds:47C4h
+    /// 9940: E8 39 79       call sub_314C (0x127C)
+    /// 9943: 72 09          jb locret_B81E (0x994E)
+    /// 9945: (fall through into sub_B815)
+    /// </code>
+    /// </remarks>
+    public Action BuildSceneRecordPtr_1000_9908_019908(int gotoAddress) {
+        SI = UInt16[DS, 0x47CA];                       // mov si,ds:47CAh
+        ES = UInt16[DS, 0xDBB2];                        // mov es,ds:0DBB2h
+        ComputeBpFromMenuState_1000_994F_01994F(0);     // call sub_B81F -> bp
+        UInt8[DS, 0x47D1] = 0xC0;                        // mov byte ds:47D1h,0C0h
+        ushort v = (ushort)((UInt8[DS, 0x478C]) << 2);  // al=[0x478C]; xor ah,ah; shl ax,1 ;shl ax,1
+        AX = v;
+        UInt16[DS, 0x47CE] = v;                          // mov ds:47CEh,ax
+        SI = (ushort)(SI + UInt16[ES, (ushort)(BP + SI)]);   // add si,es:[bp+si]
+        Skip32StringsIf47D0_1000_996C_1996C(0);          // call sub_B83C
+        UInt16[DS, 0x47C8] = SI;                          // mov ds:47C8h,si
+        ushort swapped = UInt16[DS, 0x47C6];             // xchg si,ds:47C6h
+        UInt16[DS, 0x47C6] = SI;
+        SI = swapped;
+        if (SI != 0) {                                   // or si,si ; jnz locret_B81E
+            return NearRet();
+        }
+        if ((sbyte)UInt8[DS, 0x00EA] > 0) {              // cmp byte ds:0EAh,0 ; jg locret_B81E
+            return NearRet();
+        }
+        AX = UInt16[DS, 0x47C4];                          // mov ax,ds:47C4h
+        CheckAl4AndByte2ARange_1000_127C_1127C(0);        // call sub_314C (sets CF)
+        if (CarryFlag) {                                  // jb locret_B81E
+            return NearRet();
+        }
+        return NearJump(0x9945);                          // fall through into sub_B815
     }
 
     /// <summary>
