@@ -29,6 +29,45 @@ public partial class Overrides {
         DefineFunction(cs1, 0xCDBF, HnmReadFromFileHandle_1000_CDBF_01CDBF);
         DefineFunction(cs1, 0xCE1A, HnmReset_1000_CE1A_01CE1A);
         DefineFunction(cs1, 0xCD8F, HnmReadHeaderSize_1000_CD8F_01CD8F);
+        DefineFunction(cs1, 0xCDA0, HnmPrepareHeaderRead_1000_CDA0_01CDA0);
+    }
+
+    /// <summary>
+    /// Override for cs1:0xCDA0 — <c>hnm_prepare_header_read_ida</c>
+    /// (<c>sub_EC70</c>). Chain-port over already-C# pieces:
+    /// <see cref="HnmReset_1000_CE1A_01CE1A"/> (sub_ECEA) →
+    /// <see cref="HnmReadHeaderSize_1000_CD8F_01CD8F"/> (sub_EC5F); on its
+    /// short-read CF it near-returns (the raw-asm <c>retn</c> at
+    /// <c>cs1:0xCE00</c>); else it computes the decode-buffer pointers
+    /// (<c>[0xDC10]</c>/<c>[0xDC0C]</c>), stores the header word via
+    /// <c>stosw</c>, sets <c>CX</c>=size-2, and falls through into
+    /// <see cref="HnmReadFromFileHandle_1000_CDBF_01CDBF"/> (<c>cs1:0xCDBF</c>).
+    /// Pure orchestration over C# + compute — no INT/port/far/lds — exact port.
+    /// </summary>
+    /// <remarks>
+    /// Asm (cs1:0xCDA0..0xCDBE), cross-verified against the cs1 dump:
+    /// <code>
+    /// call sub_ECEA(0xCE1A) ; call sub_EC5F(0xCD8F) ; jb locret_ECD0(0xCE00=retn)
+    /// mov di,[0xCE74] ; sub di,ax ; sub di,2
+    /// mov [0xDC10],di ; stosw ; mov [0xDC0C],di
+    /// mov cx,ax ; sub cx,2
+    /// (fall through into HnmReadFromFileHandle @0xCDBF)
+    /// </code>
+    /// </remarks>
+    public Action HnmPrepareHeaderRead_1000_CDA0_01CDA0(int gotoAddress) {
+        HnmReset_1000_CE1A_01CE1A(0);                       // call sub_ECEA (0xCE1A)
+        HnmReadHeaderSize_1000_CD8F_01CD8F(0);              // call sub_EC5F (0xCD8F)
+        if (CarryFlag) {                                    // jb locret_ECD0 (0xCE00 = retn)
+            return NearRet();
+        }
+        ushort di = (ushort)(UInt16[DS, 0xCE74] - AX - 2); // mov di,[0xCE74]; sub di,ax; sub di,2
+        UInt16[DS, 0xDC10] = di;                            // mov [0xDC10],di
+        UInt16[ES, di] = AX;                                // stosw (ES:[DI]=AX)
+        di = (ushort)(di + 2);                              //   DI += 2
+        UInt16[DS, 0xDC0C] = di;                            // mov [0xDC0C],di
+        DI = di;
+        CX = (ushort)(AX - 2);                              // mov cx,ax; sub cx,2
+        return NearJump(0xCDBF);                             // fall through -> HnmReadFromFileHandle (C#)
     }
 
     /// <summary>
