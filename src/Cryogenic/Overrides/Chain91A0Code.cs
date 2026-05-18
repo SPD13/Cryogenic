@@ -67,6 +67,70 @@ public partial class Overrides {
     }
 
     /// <summary>
+    /// Registers the <c>cs1:0x8B11</c> (<c>sub_A9E1</c>) deep-chain campaign
+    /// overrides (14-node bounded subtree — the largest Phase-27-cluster
+    /// member, L210 root with 7 §A indirects; <c>tools/chain_tree.py</c>).
+    /// </summary>
+    public void DefineChain8B11CodeOverrides() {
+        DefineFunction(cs1, 0x9046, GridScanPatchSetup_1000_9046_019046);
+        DefineFunction(cs1, 0xC0E8, FarCall392DBpCE7A_1000_C0E8_01C0E8);
+    }
+
+    /// <summary>
+    /// cs1:0x9046 — <c>sub_AF16</c>. Sets up a <c>repne scasb</c> grid scan
+    /// (<c>es=ds; cx = [0x4793]*[0x2240]; di=[0x22FC]; al=0x0F;
+    /// ah = ([0xEA]&gt;0 signed) ? 8 : 0xF0; bx=0</c>) then enters the
+    /// scan/patch loop at <c>loc_AF33</c> (cs1:0x9063). The setup is ported
+    /// in C#; the loop is delegated to the emulated stream via
+    /// <see cref="NearJump"/>(0x9063) — deliberately: the loop's
+    /// <c>repne scasb</c> + <c>jnz</c> depends on x86 ZF-persistence across a
+    /// CX=0 re-entry that is only faithful when executed by the emulator.
+    /// </summary>
+    /// <remarks>
+    /// Asm head byte-verified vs cs1.bin@0x9046
+    /// (<c>1E 07 A1 93 47 F7 26 40 22 8B C8 8B 3E FC 22 B8 0F F0 33 DB
+    /// 80 3E EA 00 00 7E 02 B4 08</c>): <c>jle loc_AF33</c> → 0x9063;
+    /// <c>mov ah,8</c> @0x9061; loc_AF33 @0x9063.
+    /// </remarks>
+    public Action GridScanPatchSetup_1000_9046_019046(int gotoAddress) {
+        ES = DS;                                        // push ds ; pop es
+        ushort a = UInt16[DS, 0x4793];                  // mov ax,ds:4793h
+        uint prod = (uint)a * UInt16[DS, 0x2240];       // mul word ptr ds:2240h
+        AX = (ushort)prod;
+        DX = (ushort)(prod >> 16);                       //   (mul sets dx:ax)
+        CX = (ushort)prod;                               // mov cx,ax
+        DI = UInt16[DS, 0x22FC];                          // mov di,ds:22FCh
+        ushort ax = 0xF00F;                               // mov ax,0F00Fh
+        BX = 0;                                            // xor bx,bx
+        if ((sbyte)UInt8[DS, 0x00EA] > 0) {              // cmp byte ds:0EAh,0 ; jle loc_AF33
+            ax = (ushort)((ax & 0x00FF) | 0x0800);       // mov ah,8
+        }
+        AX = ax;
+        return NearJump(0x9063);                          // loc_AF33 (repne-scasb loop, emulated)
+    }
+
+    /// <summary>
+    /// cs1:0xC0E8 — <c>sub_DFB8</c>. Clean §A: <c>es=[0xDBD8];
+    /// bp=0xCE7A; call dword ptr ds:[0x392D]; retn</c>. Pushes CS(cs1) +
+    /// the raw continuation IP 0xC0F3 (the bare <c>retn</c>) then
+    /// <see cref="FarJump"/> to <c>[0x392D]</c>.
+    /// </summary>
+    /// <remarks>
+    /// Asm 12 B byte-verified vs cs1.bin@0xC0E8
+    /// (<c>8E 06 D8 DB BD 7A CE FF 1E 2D 39 C3</c>): far call @0xC0EF,
+    /// continuation @0xC0F3 = <c>C3</c>.
+    /// </remarks>
+    public Action FarCall392DBpCE7A_1000_C0E8_01C0E8(int gotoAddress) {
+        ES = UInt16[DS, 0xDBD8];                          // mov es,ds:0DBD8h
+        BP = 0xCE7A;                                       // mov bp,0CE7Ah
+        ushort off = UInt16[DS, 0x392D];                  // call dword ptr ds:392Dh
+        ushort seg = UInt16[DS, 0x392F];
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = cs1;
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0xC0F3;   // continuation (raw retn)
+        return FarJump(seg, off);
+    }
+
+    /// <summary>
     /// cs1:0x9EFD — <c>sub_BDCD</c>, the 0x9EFD-campaign root. Snapshots
     /// <c>al=[0x47DC] → [0x47DD]</c>, loads <c>ax=[0x4780]</c>,
     /// <c>bx=[0x47C4]</c>, then <c>call sub_C59C</c>; bails on CF=0
