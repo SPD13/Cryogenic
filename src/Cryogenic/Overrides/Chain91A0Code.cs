@@ -631,10 +631,30 @@ public partial class Overrides {
     /// reality, exact via the emulator.
     /// </summary>
     public void DefineVerb13HandlerCodeOverrides() {
+        DefineFunction(cs1, 0xD323, DialogueFlush_1000_D323_01D323);
         DefineFunction(cs1, 0x4F0C, Verb13Dispatch_1000_4F0C_014F0C);
         DefineFunction(cs1, 0x5B5D, StoreBxDxTo197x_1000_5B5D_015B5D);
         DefineFunction(cs1, 0x49D9, Verb13IndirectGate_1000_49D9_0149D9);
         DefineFunction(cs1, 0x2E52, SceneSetupThenChunk_1000_2E52_012E52);
+    }
+
+    /// <summary>
+    /// cs1:0xD323 — <c>sub_F1F3</c>, the <b>dialogue-flush helper</b>
+    /// (task #7). A pure 4-transfer thunk: <c>call sub_F1E6;
+    /// call sub_F208; call sub_F150; jmp loc_F2E0</c> — zero compute.
+    /// First op is the call to <c>sub_F1E6</c> (cs1:0xD316), so it is
+    /// modelled with the call-continuation idiom: push the raw post-call IP
+    /// 0xD326, <see cref="NearJump"/> to sub_F1E6; the
+    /// <c>call sub_F208; call sub_F150; jmp loc_F2E0</c> tail runs in the
+    /// emulated stream (each transfer dispatched correctly, C# or asm).
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0xD323
+    /// (<c>E8 F0 FF E8 0F 00 E8 54 FF E9 E1 00</c>): call sub_F1E6 @0xD323
+    /// → 0xD316, continuation @0xD326; sub_F208 0xD338, sub_F150 0xD280,
+    /// loc_F2E0 0xD410.</remarks>
+    public Action DialogueFlush_1000_D323_01D323(int gotoAddress) {
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0xD326;   // call sub_F1E6 (cont = raw F208/F150/jmp tail)
+        return NearJump(0xD316);
     }
 
     /// <summary>
