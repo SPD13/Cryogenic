@@ -64,7 +64,7 @@ public partial class Overrides {
         DefineFunction(cs1, 0xC097, "gfx_call_bp_with_front_buffer_as_screen_ida");
         DefineFunction(cs1, 0xC108, "transition_ida");
         // cs1:0xC137 load_icons_sprites_ida (sub_E007) — real C# override in UnknownCode.cs.
-        DefineFunction(cs1, 0xC13E, "open_sprite_sheet_ida");
+        // cs1:0xC13E open_sprite_sheet_ida (sub_E00E) — real C# override in Chain91A0Code.cs.
         DefineFunction(cs1, 0xC1BA, "hnm_apply_palette_ida");
         // cs1:0xC22F — real C# override in GraphicsCompositionCode.cs (DrawSprite, Phase 37).
         // cs1:0xC477 — real C# override in IndirectFarCode.cs (GfxCopyRectAtSi).
@@ -118,7 +118,7 @@ public partial class Overrides {
         // cs1:0xE9F4 — real C# override in InputCode.cs (MouseFuncUncalled, dead code, ported for completeness).
         DefineFunction(cs1, 0xEA32, "initialize_joystick_ida");
         DefineFunction(cs1, 0xEA7B, "memory_func_qq_ida");
-        DefineFunction(cs1, 0xEAB7, "memory_func_qq_ida");
+        // cs1:0xEAB7 memory_func_qq_ida (sub_10987) — real C# override in Chain91A0Code.cs.
         // cs1:0xEC46 — real C# override in IndirectFarCode.cs (CallMemoryFunc2).
         // cs1:0xEC59 — real C# override in IndirectFarCode.cs (CallMemoryFunc1).
         DefineFunction(cs1, 0xEC9C, "xms_memory_func_1_ida");

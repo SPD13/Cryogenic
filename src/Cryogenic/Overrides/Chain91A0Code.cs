@@ -108,6 +108,58 @@ public partial class Overrides {
         DefineFunction(cs1, 0xF244, OpenResRetryLoop_1000_F244_01F244);
         DefineFunction(cs1, 0xF0D6, EnsureResCacheSpace_1000_F0D6_01F0D6);
         DefineFunction(cs1, 0xF0B9, LoadResById_1000_F0B9_01F0B9);
+        DefineFunction(cs1, 0xEAB7, ReclaimCachePages_1000_EAB7_01EAB7);
+        DefineFunction(cs1, 0xC13E, ResolveResHandle_1000_C13E_01C13E);
+    }
+
+    /// <summary>
+    /// cs1:0xEAB7 — <c>sub_10987</c> (L104). Large cache-page reclaim
+    /// orchestrator with a 6-byte bp-frame, <c>repne scasw</c> scan and two
+    /// loops. No portable compute head — first op is
+    /// <c>call sub_10140</c> (cs1:0xE270 PushAll, NearRet-inline so
+    /// call-and-discard-safe). The L104 body (the bp-frame setup, the
+    /// <c>repne scasw</c>/<c>sub_10A44</c>/<c>sub_10B29</c>/<c>sub_10A7A</c>
+    /// loops and the closing <c>call sub_10153</c> PopAll) is delegated to
+    /// the emulated stream via <see cref="NearJump"/>(0xEABA) — faithful
+    /// only when the bp-frame, repne and the calls run emulated.
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0xEAB7
+    /// (<c>E8 B6 F7 1E 06 83 EC 06 8B EC ...</c>): call sub_10140 @0xEAB7 →
+    /// 0xE270, body @0xEABA.</remarks>
+    public Action ReclaimCachePages_1000_EAB7_01EAB7(int gotoAddress) {
+        PushAll_1000_E270_01E270(0);          // call sub_10140 (NearRet-safe)
+        return NearJump(0xEABA);              // L104 bp-frame/loop body (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0xC13E — <c>sub_E00E</c>, the <b>0xC13E-campaign root</b> (L64).
+    /// Resolves/caches a resource handle keyed by <c>ax</c>. Head ported in
+    /// C#: <c>or ax,ax; js locret_E079</c> (negative → retn 0xC1A9);
+    /// <c>push bx; bx=ax; xchg bx,[0x2784]; cmp ax,bx; jz loc_E078</c>
+    /// (unchanged → 0xC1A8 pop bx; retn). The body (cs1:0xC14D onward —
+    /// the <c>0xD844</c> table walk, <c>les di,[si]</c>, the
+    /// continuation-unsafe <c>sub_E07A</c>/<c>sub_10F89</c> calls and the
+    /// §A <c>call dword ptr ds:[0x3905]</c>) is delegated to the emulated
+    /// stream via <see cref="NearJump"/>; the pushed <c>bx</c> is balanced
+    /// by the emulated <c>loc_E078: pop bx; retn</c>.
+    /// </summary>
+    /// <remarks>Asm head byte-verified vs cs1.bin@0xC13E
+    /// (<c>0B C0 78 67 53 8B D8 87 1E 84 27 3B C3 74 5B 56 57</c>):
+    /// js +0x67 → locret_E079 0xC1A9; jz +0x5B → loc_E078 0xC1A8;
+    /// body @0xC14D.</remarks>
+    public Action ResolveResHandle_1000_C13E_01C13E(int gotoAddress) {
+        if ((short)AX < 0) {                              // or ax,ax ; js locret_E079
+            return NearRet();
+        }
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = BX;       // push bx
+        ushort bxNew = AX;                                 // mov bx,ax
+        ushort old = UInt16[DS, 0x2784];                   // xchg bx,ds:2784h
+        UInt16[DS, 0x2784] = bxNew;
+        BX = old;
+        if (AX == old) {                                   // cmp ax,bx ; jz loc_E078
+            return NearJump(0xC1A8);                        // loc_E078: pop bx; retn (emulated)
+        }
+        return NearJump(0xC14D);                            // body (emulated)
     }
 
     /// <summary>
