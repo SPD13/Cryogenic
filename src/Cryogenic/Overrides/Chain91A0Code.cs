@@ -631,11 +631,44 @@ public partial class Overrides {
     /// reality, exact via the emulator.
     /// </summary>
     public void DefineVerb13HandlerCodeOverrides() {
+        DefineFunction(cs1, 0xA03F, OuterVmActionDispatch_1000_A03F_01A03F);
         DefineFunction(cs1, 0xD323, DialogueFlush_1000_D323_01D323);
         DefineFunction(cs1, 0x4F0C, Verb13Dispatch_1000_4F0C_014F0C);
         DefineFunction(cs1, 0x5B5D, StoreBxDxTo197x_1000_5B5D_015B5D);
         DefineFunction(cs1, 0x49D9, Verb13IndirectGate_1000_49D9_0149D9);
         DefineFunction(cs1, 0x2E52, SceneSetupThenChunk_1000_2E52_012E52);
+    }
+
+    /// <summary>
+    /// cs1:0xA03F — <c>sub_BF0F</c>, the <b>Phase-27.2 verb-action
+    /// dispatcher</b> driven by the outer action-record VM
+    /// (<c>sub_BE6E</c>/0x9F9E, already C#). Runs <c>sub_E72B</c>
+    /// (cs1:0xC85B InitDialogue — NearRet-inline, call-and-discard-safe)
+    /// and the <c>[0x47B6]</c> guard in C#; if non-zero jumps to
+    /// <c>loc_BF7A</c> (cs1:0xA0AA, the post-dispatch section: the C#
+    /// <c>sub_B65E</c>/<c>sub_4D8F</c>/<c>sub_BDCD</c> calls + the
+    /// register-indirect <c>call ax</c> through <c>[0x227E]</c>); else
+    /// falls into the verb body at cs1:0xA049 — the
+    /// <c>al=[si]&amp;0x0F</c> verb index, the <c>0xA107</c> handler-table
+    /// dispatch <c>call word ptr cs:[bx]</c>, and the self-modifying
+    /// <c>mov cs:[bp+0],ax</c> action-record writes. The two indirect
+    /// calls, the CS-relative jump table and the self-modifying writes are
+    /// all delegated to the emulated stream via <see cref="NearJump"/>
+    /// (faithful only when executed there; every callee is C# and
+    /// dispatches correctly through the real emulated calls).
+    /// </summary>
+    /// <remarks>Asm head byte-verified vs cs1.bin@0xA03F
+    /// (<c>E8 19 28 83 3E B6 47 00 75 61 8A 04 24 0F 74 0F ...</c>):
+    /// call sub_E72B @0xA03F → 0xC85B; jnz +0x61 → loc_BF7A 0xA0AA;
+    /// verb body @0xA049. (sub_BE6E/0x9F9E, the outer action-record VM
+    /// itself, is already a real C# override in OuterVmCode.cs — this
+    /// completes Phase 27.2.)</remarks>
+    public Action OuterVmActionDispatch_1000_A03F_01A03F(int gotoAddress) {
+        InitDialogue_1000_C85B_01C85B(0);                  // call sub_E72B (NearRet-safe)
+        if (UInt16[DS, 0x47B6] != 0) {                     // cmp word ds:47B6h,0 ; jnz loc_BF7A
+            return NearJump(0xA0AA);                         // loc_BF7A (emulated)
+        }
+        return NearJump(0xA049);                            // verb-dispatch body (emulated)
     }
 
     /// <summary>
