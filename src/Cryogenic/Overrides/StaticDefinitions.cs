@@ -135,15 +135,15 @@ public partial class Overrides {
         DefineFunction(cs1, 0xF05C, "reset_keyboard_ida");
         // cs1:0xF08E clear_keyboard_array_ida — real C# override in InputCode.cs.
         DefineFunction(cs1, 0xF0A0, "open_resource_force_hsq_ida");
-        DefineFunction(cs1, 0xF0B9, "open_resource_by_index_si_ida");
-        DefineFunction(cs1, 0xF0D6, "read_and_maybe_hsq_ida");
+        // cs1:0xF0B9 open_resource_by_index_si_ida (sub_10F89) — real C# override in Chain91A0Code.cs.
+        // cs1:0xF0D6 read_and_maybe_hsq_ida (sub_10FA6) — real C# override in Chain91A0Code.cs.
         DefineFunction(cs1, 0xF0F6, "bump_alloc_get_addr_in_di_ida");
         // cs1:0xF0FF bump_allocate_bump_cx_bytes_ida — real C# override in MemoryResourceCode.cs.
         // cs1:0xF11C alloc_cx_pages_to_di_ida — real C# override in MemoryResourceCode.cs.
         // cs1:0xF13F allocator_attempt_to_free_space_ida — real C# override in MemoryResourceCode.cs.
         DefineFunction(cs1, 0xF1FB, "open_res_or_file_to_dx_size_ax_ida");
         // cs1:0xF229 open_res_or_file_or_die_ida (sub_110F9) — real C# override in Chain91A0Code.cs.
-        DefineFunction(cs1, 0xF244, "read_resource_to_esdi_ida");
+        // cs1:0xF244 read_resource_to_esdi_ida (sub_11114) — real C# override in Chain91A0Code.cs.
         DefineFunction(cs1, 0xF255, "open_nonres_file_ida");
         DefineFunction(cs1, 0xF260, "read_ffff_to_esdi_and_close_ida");
         // cs1:0xF2A7 seek_dune_dat_to_res_dsdx_ida (sub_11177) — real C# override in MemoryResourceCode.cs.

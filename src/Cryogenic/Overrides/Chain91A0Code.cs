@@ -103,6 +103,146 @@ public partial class Overrides {
         DefineFunction(cs1, 0xC1AA, ToggleDbb4FromCounter_1000_C1AA_01C1AA);
         DefineFunction(cs1, 0xEBAA, ClearAndWalkEsList_1000_EBAA_01EBAA);
         DefineFunction(cs1, 0xF229, ReloadSaveThenCopy36C4_1000_F229_01F229);
+        DefineFunction(cs1, 0xEBE3, ResCacheReclaim_1000_EBE3_01EBE3);
+        DefineFunction(cs1, 0xEB74, FindOldestCacheSlot_1000_EB74_01EB74);
+        DefineFunction(cs1, 0xF244, OpenResRetryLoop_1000_F244_01F244);
+        DefineFunction(cs1, 0xF0D6, EnsureResCacheSpace_1000_F0D6_01F0D6);
+        DefineFunction(cs1, 0xF0B9, LoadResById_1000_F0B9_01F0B9);
+    }
+
+    /// <summary>
+    /// cs1:0xEBE3 — <c>sub_10AB3</c>. Resource-cache reclaim. Head ported in
+    /// C# (push dx/ds; <c>si=[0x39A9]; ds=[0xCE6C]; si=(si+ax)*2;
+    /// ax=ds:[si]</c>; null → <c>loc_10B13</c> 0xEC43 = <c>pop ds;pop dx;
+    /// retn</c>). The reclaim loop body (cs1:0xEBF7) — which calls the
+    /// continuation-unsafe §A <c>sub_10B16</c> (cs1:0xEC46) — is delegated
+    /// to the emulated stream via <see cref="NearJump"/>; the pushed dx/ds
+    /// are balanced by the emulated tail's <c>pop ds;pop dx;retn</c>.
+    /// </summary>
+    /// <remarks>Asm head byte-verified vs cs1.bin@0xEBE3
+    /// (<c>52 1E 8B 36 A9 39 8E 1E 6C CE 03 F0 D1 E6 8B 04 0B C0 74 4C</c>):
+    /// jz +0x4C → loc_10B13 0xEC43; body @0xEBF7.</remarks>
+    public Action ResCacheReclaim_1000_EBE3_01EBE3(int gotoAddress) {
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = DX;       // push dx
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = DS;       // push ds
+        SI = UInt16[DS, 0x39A9];                           // mov si,ds:39A9h
+        DS = UInt16[DS, 0xCE6C];                            // mov ds,ds:0CE6Ch
+        SI = (ushort)(SI + AX);                             // add si,ax
+        SI = (ushort)(SI << 1);                             // shl si,1
+        AX = UInt16[DS, SI];                                // mov ax,[si]
+        if (AX == 0) {                                       // or ax,ax ; jz loc_10B13
+            return NearJump(0xEC43);                         // pop ds;pop dx;retn (emulated)
+        }
+        return NearJump(0xEBF7);                             // reclaim loop body (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0xEB74 — <c>sub_10A44</c>. Scans the 0xB9-entry cache table at
+    /// <c>es:[bp+0]</c> for the oldest live slot (max
+    /// <c>word_10945 - es:[si+0x172]</c>) and, if found, retires it via
+    /// <see cref="ClearAndWalkEsList_1000_EBAA_01EBAA"/> (sub_10A7A —
+    /// NearRet-inline, call-and-discard-safe). Fully ported.
+    /// </summary>
+    /// <remarks>Asm (L32) byte-verified vs cs1.bin@0xEB74
+    /// (<c>52 56 8B 76 00 B9 B9 00 2E 8B 16 75 EA 33 DB ... E8 03 00 5E ..</c>):
+    /// <c>loop loc_10A53</c> (dec cx; jnz); <c>jb loc_10A69</c> skips the
+    /// di/bx update when ax&lt;bx. <c>word_10945</c> is the cs:0xEA75 word.</remarks>
+    public Action FindOldestCacheSlot_1000_EB74_01EB74(int gotoAddress) {
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = DX;       // push dx
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = SI;       // push si
+        ushort si = UInt16[SS, (ushort)(BP + 0)];          // mov si,[bp+0]
+        ushort cx = 0x00B9;                                 // mov cx,0B9h
+        ushort dx = UInt16[cs1, 0xEA75];                    // mov dx,cs:word_10945
+        ushort bx = 0;                                       // xor bx,bx
+        ushort di = DI;
+        do {
+            ushort ax = UInt16[ES, si];                     // mov ax,es:[si]
+            if (ax != 0) {                                   // or ax,ax ; jz loc_10A69
+                ax = (ushort)(dx - UInt16[ES, (ushort)(si + 0x172)]); // ax=dx; sub ax,es:[si+172h]
+                if (ax >= bx) {                              // cmp ax,bx ; jb loc_10A69
+                    di = si;                                 // mov di,si
+                    bx = ax;                                 // mov bx,ax
+                }
+            }
+            si = (ushort)(si + 2);                           // loc_10A69: add si,2
+            cx = (ushort)(cx - 1);                           // loop loc_10A53
+        } while (cx != 0);
+        SI = si; DI = di; BX = bx; DX = dx; CX = 0;
+        if (bx != 0) {                                       // or bx,bx ; jz loc_10A77
+            SI = di;                                         // mov si,di
+            ClearAndWalkEsList_1000_EBAA_01EBAA(0);          // call sub_10A7A (NearRet-safe)
+        }
+        SI = UInt16[SS, SP]; SP = (ushort)(SP + 2);          // loc_10A77: pop si
+        DX = UInt16[SS, SP]; SP = (ushort)(SP + 2);          // pop dx
+        return NearRet();                                     // retn
+    }
+
+    /// <summary>
+    /// cs1:0xF244 — <c>sub_11114</c>. Retry loop: <c>push dx;
+    /// call sub_110F9; pop dx; cmp bx,[0xDBBA]; jnz sub_11130;
+    /// call sub_111BA; jb sub_11114; retn</c>. First op is the call to the
+    /// continuation-port <c>sub_110F9</c> (cs1:0xF229) so it is modelled
+    /// with the call-continuation idiom: push dx, push raw post-call IP
+    /// 0xF248, <see cref="NearJump"/> to sub_110F9; the
+    /// <c>cmp/jnz/call sub_111BA/jb-loop/retn</c> tail (which re-enters this
+    /// override on the <c>jb sub_11114</c> back-edge) runs emulated.
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0xF244
+    /// (<c>52 E8 E1 FF 5A 3B 1E BA DB 75 11 E8 98 00 72 F0 C3</c>):
+    /// call sub_110F9 @0xF245 → 0xF229, continuation @0xF248.</remarks>
+    public Action OpenResRetryLoop_1000_F244_01F244(int gotoAddress) {
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = DX;       // push dx
+        SP = (ushort)(SP - 2); UInt16[SS, SP] = 0xF248;   // call sub_110F9 (cont = raw tail)
+        return NearJump(0xF229);
+    }
+
+    /// <summary>
+    /// cs1:0xF0D6 — <c>sub_10FA6</c>. Ensures resource-cache space. Head
+    /// decision ported in C# (<c>ax=[0xCE78]; cmp al,[0xCE70]</c>); the
+    /// call-heavy body — <c>call sub_10AB3</c> /
+    /// <c>loc_10FB4: call sub_11114; …; call sub_10987</c> and
+    /// <c>jmp loc_112A3</c> into the FUNCTION CHUNK @0xF3D3 — is delegated
+    /// to the emulated stream via <see cref="NearJump"/> (0xF0DF when
+    /// <c>al &lt; [0xCE70]</c>, else loc_10FB4 0xF0E4).
+    /// </summary>
+    /// <remarks>Asm head byte-verified vs cs1.bin@0xF0D6
+    /// (<c>A1 78 CE 3A 06 70 CE 73 05 E8 01 FB 72 0F E8 5D 01 ...</c>):
+    /// jnb +5 → loc_10FB4 0xF0E4.</remarks>
+    public Action EnsureResCacheSpace_1000_F0D6_01F0D6(int gotoAddress) {
+        AX = UInt16[DS, 0xCE78];                           // mov ax,ds:0CE78h
+        if (AL >= UInt8[DS, 0xCE70]) {                     // cmp al,ds:0CE70h ; jnb loc_10FB4
+            return NearJump(0xF0E4);                         // loc_10FB4 (emulated)
+        }
+        return NearJump(0xF0DF);                             // call sub_10AB3 ... (emulated)
+    }
+
+    /// <summary>
+    /// cs1:0xF0B9 — <c>sub_10F89</c>. Resolves a resource by id: records
+    /// <c>[0xCE78]=si</c>, indexes the <c>0x31FF</c> table
+    /// (<c>si=[si*2+0x31FF]</c>), reads the size word; size 0 → tail to
+    /// <c>sub_10FA6</c> (cs1:0xF0D6); else delegates
+    /// <c>cx=ax; push dx; call sub_10FEC; pop dx; call sub_10FA6;
+    /// jmp sub_10FCF</c> to the emulated stream (cs1:0xF0CA) — both
+    /// sub_10FEC/0xF11C and sub_10FA6 are reached via real emulated calls.
+    /// The address-computation head is ported in C#.
+    /// </summary>
+    /// <remarks>Asm byte-verified vs cs1.bin@0xF0B9
+    /// (<c>89 36 78 CE D1 E6 8B B4 FF 31 AD 8B D6 0B C0 74 0C 8B C8 52
+    /// E8 4C 00 5A E8 02 00 EB 29</c>): jz +0xC → sub_10FA6 0xF0D6;
+    /// delegate point 0xF0CA.</remarks>
+    public Action LoadResById_1000_F0B9_01F0B9(int gotoAddress) {
+        UInt16[DS, 0xCE78] = SI;                            // mov ds:0CE78h,si
+        ushort si = (ushort)(SI << 1);                      // shl si,1
+        si = UInt16[DS, (ushort)(si + 0x31FF)];             // mov si,[si+31FFh]
+        ushort ax = UInt16[DS, si];                         // lodsw
+        si = (ushort)(si + 2);
+        SI = si;
+        DX = si;                                             // mov dx,si
+        AX = ax;
+        if (ax == 0) {                                       // or ax,ax ; jz sub_10FA6
+            return NearJump(0xF0D6);                          // tail -> sub_10FA6 (emulated)
+        }
+        return NearJump(0xF0CA);                              // cx=ax; push dx; call sub_10FEC ... (emulated)
     }
 
     /// <summary>
